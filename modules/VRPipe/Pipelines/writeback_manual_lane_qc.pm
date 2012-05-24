@@ -16,7 +16,7 @@ class VRPipe::Pipelines::writeback_manual_lane_qc with VRPipe::PipelineRole {
     
     method _step_list {
         return ([ VRPipe::Step->get(name => 'manual_lane_qc_to_meta') ],
-        [ VRPipe::StepAdaptorDefiner->new(from_step => 0, to_step => 1, to_key => 'bam_files'),
+        [ VRPipe::StepAdaptorDefiner->new(from_step => 0, to_step => 1, to_key => 'bam_files') ],
         [ ]);
     }
 }
