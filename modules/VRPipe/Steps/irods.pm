@@ -150,8 +150,6 @@ class VRPipe::Steps::irods with VRPipe::StepRole {
             $dest_file->unlink;
             $self->throw("expected md5 checksum in metadata did not match md5 of $source in IRODS; aborted");
         }
-            $self->throw("expected md5 checksum in metadata did not match md5 of $source in IRODS; aborted");
-        }
         
         # -K: checksum
         # -Q: use UDP rather than TCP
