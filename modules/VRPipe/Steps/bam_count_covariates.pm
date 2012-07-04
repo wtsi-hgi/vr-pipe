@@ -69,7 +69,7 @@ class VRPipe::Steps::bam_count_covariates extends VRPipe::Steps::gatk {
             $self->throw("reference_fasta must be an absolute path") unless $ref->is_absolute;
             
             my $known_sites = $options->{known_sites_for_recalibration};
-            $self->throw('No knownSites supplied') unless ($known_sites =~ /-knownSites \S+/ || $known_sites =~ /-B\S+ \S+/);
+            $self->throw('No knownSites supplied') unless ($known_sites =~ /-knownSites(|\:\S+) \S+/ || $known_sites =~ /-B\S+ \S+/);
             
             my $covariates_options = $options->{gatk_count_covariates_options};
             if ($covariates_options =~ /$ref|knownSites|CountCovariates/) {
