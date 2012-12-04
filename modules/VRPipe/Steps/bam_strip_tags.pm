@@ -98,9 +98,13 @@ class VRPipe::Steps::bam_strip_tags with VRPipe::StepRole {
         my $out_bam_path = $out_bam->path->stringify;
         $in_bam->disconnect;
         my $num_records = 0;
+        
+        $bp->get_fields('FLAG');
+        my $parsed_record = $pars->parsed_record();
+
         while ($bp->next_record) {
             $bp->write_result($out_bam_path);
-            $num_records++;
+            if ($bp->passes_qc($parsed_record->{FLAG})) $num_records++;
         }
         $bp->close;
         
