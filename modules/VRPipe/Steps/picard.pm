@@ -40,7 +40,7 @@ class VRPipe::Steps::picard extends VRPipe::Steps::java {
         coerce => 1
     );
     
-    has '+memory_multiplier' => (default => 0.7);
+    has '+memory_multiplier' => (default => 0.9);
     
     around _build_standard_options {
         return [@{ $self->$orig }, 'picard_path'];

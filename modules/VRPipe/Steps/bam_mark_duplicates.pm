@@ -59,7 +59,7 @@ class VRPipe::Steps::bam_mark_duplicates extends VRPipe::Steps::picard {
                 )
             );
             
-            my $req = $self->new_requirements(memory => 5800, time => 2);
+            my $req = $self->new_requirements(memory => 9800, time => 2);
             foreach my $bam (@{ $self->inputs->{bam_files} }) {
                 my $bam_base     = $bam->basename;
                 my $bam_meta     = $bam->metadata;
