@@ -307,7 +307,66 @@ class VRPipe::Parser::bamcheck with VRPipe::ParserRole {
         isa    => 'Num',
         writer => '_mean_coverage'
     );
+
+    # annots added by bamcheck_indels
+
+    has 'fwd_percent_insertions_above_baseline' => (
+        is     => 'ro',
+        isa    => 'Num',
+        writer => '_fwd_percent_insertions_above_baseline',
+    );
     
+    has 'fwd_percent_insertions_below_baseline' => (
+        is     => 'ro',
+        isa    => 'Num',
+        writer => '_fwd_percent_insertions_below_baseline',
+    );
+
+    has 'fwd_percent_deletions_above_baseline' => (
+        is     => 'ro',
+        isa    => 'Num',
+        writer => '_fwd_percent_deletions_above_baseline',
+    );
+
+    has 'fwd_percent_deletions_below_baseline' => (
+        is     => 'ro',
+        isa    => 'Num',
+        writer => '_fwd_percent_deletions_below_baseline',
+    );
+
+    has 'rev_percent_insertions_above_baseline' => (
+        is     => 'ro',
+        isa    => 'Num',
+        writer => '_rev_percent_insertions_above_baseline',
+    );
+
+    has 'rev_percent_insertions_below_baseline' => (
+        is     => 'ro',
+        isa    => 'Num',
+        writer => '_rev_percent_insertions_below_baseline',
+    );
+
+    has 'rev_percent_deletions_above_baseline' => (
+        is     => 'ro',
+        isa    => 'Num',
+        writer => '_rev_percent_deletions_above_baseline',
+    );
+
+    has 'rev_percent_deletions_below_baseline' => (
+        is     => 'ro',
+        isa    => 'Num',
+        writer => '_rev_percent_deletions_below_baseline',
+    );
+
+    # qual dropoff
+
+    has 'contiguous_cycle_dropoff_count' => (
+        is     => 'ro',
+        isa    => 'Int',
+        writer => '_contiguous_cycle_dropoff_count',
+    );
+
+
     our %mapping = (
         FFQ => 'first_fragment_qualities',
         LFQ => 'last_fragment_qualities',

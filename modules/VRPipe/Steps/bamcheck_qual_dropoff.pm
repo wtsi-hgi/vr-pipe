@@ -1,17 +1,13 @@
 
 =head1 NAME
 
-VRPipe::Steps::convex_L2R - a step
+VRPipe::Steps::bamcheck_qual_dropoff - a step
 
 =head1 DESCRIPTION
 
-Runs the SampleLogRatio R script from the CoNVex packages. Runs once per
-pipeline, generating a log2 ratio file for each read depth file and a single
-features file.
-
 =head1 AUTHOR
 
-Chris Joyce <cj5@sanger.ac.uk>.
+Martin Pollard <mp15@sanger.co.uk>
 
 =head1 COPYRIGHT AND LICENSE
 
@@ -35,13 +31,11 @@ this program. If not, see L<http://www.gnu.org/licenses/>.
 
 use VRPipe::Base;
 
-class VRPipe::Steps::bamcheck_detect_indel extends VRPipe::Steps::r_script {
+class VRPipe::Steps::bamcheck_qual_dropoff extends VRPipe::Steps::r_script {
     around options_definition {
         return {
             %{ $self->$orig },
-            'hgi_rscript_indel_path' => VRPipe::StepOption->create(description => 'full path to hgi R script for checking data for indel bubbles'),
-            'k'                => VRPipe::StepOption->create(description => 'sliding window size'),
-            'baseline_method'  => VRPipe::StepOption->create(description => 'controls which method is used to set the baseline'),
+            'hgi_rscript_dropoff_path' => VRPipe::StepOption->create(description => 'full path to hgi R script for detecting quality dropoff in data'),
         };
     }
     
@@ -66,9 +60,7 @@ class VRPipe::Steps::bamcheck_detect_indel extends VRPipe::Steps::r_script {
             my $options = $self->options;
             $self->handle_standard_options($options);
             
-            my $hgi_rscript_path = $options->{'hgi_rscript_indel_path'};
-            my $method           = $options->{'baseline_method'};
-            my $window_size      = $options->{'k'};
+            my $hgi_rscript_path = $options->{'hgi_rscript_dropoff_path'};
             
             my $req = $self->new_requirements(memory => 2000, time => 1);
             
@@ -79,10 +71,9 @@ class VRPipe::Steps::bamcheck_detect_indel extends VRPipe::Steps::r_script {
                 
                 my $bamcheck_path = $output_bamcheck->path;
                 $output_bamcheck->md5(undef);
-                $output_bamcheck->update();
-                $output_bamcheck->disconnect();
+		$output_bamcheck->disconnect();
                 
-                my $cmd = $self->rscript_cmd_prefix . " $hgi_rscript_path bamcheck=\"$bamcheck_path\" outfile=\"$bamcheck_path\" k=$window_size baseline.method=\"$method\"";
+                my $cmd = $self->rscript_cmd_prefix . " $hgi_rscript_path bamcheck=\"$bamcheck_path\" outfile=\"$bamcheck_path\"";
                 
                 $self->dispatch([$cmd, $req, { output_files => [$bamcheck_file] }]);
             }
@@ -109,7 +100,7 @@ class VRPipe::Steps::bamcheck_detect_indel extends VRPipe::Steps::r_script {
     }
     
     method description {
-        return "Runs baseline check on indels";
+        return "Runs check on quality score dropoff";
     }
 }
 
