@@ -1,19 +1,20 @@
 
 =head1 NAME
 
-VRPipe::Steps::vrtrack_auto_qc - a step
+VRPipe::Steps::vrtrack_auto_qc_hgi_2 - a step
 
 =head1 DESCRIPTION
 
 *** more documentation to come
 
-=head1 AUTHOR
+=head1 AUTHORS
 
 Sendu Bala <sb10@sanger.ac.uk>.
+Joshua C. Randall <jcrandall@alum.mit.edu>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2012 Genome Research Limited.
+Copyright (c) 2012, 2013 Genome Research Limited.
 
 This file is part of VRPipe.
 
@@ -35,8 +36,23 @@ use v5.10;
 use Storable qw(dclone);
 use VRPipe::Base;
 
+# Max lengths for autoqc string in the vrtrack database
+my $REASON_MAX = 200;
+my $TEST_MAX = 50;
+
 class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update {
     use VRPipe::Parser;
+
+    has 'qc_results' => ( 
+	traits => ['Array'], 
+	is => 'rw', 
+	isa => 'ArrayRef[HashRef]', 
+	default => sub { [] },
+	handles => {
+	    qc_results_add => 'push',
+	    qc_results_elements => 'elements',
+	}
+	);
     
     around options_definition {
         return {
@@ -113,6 +129,102 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
         }
         return $opts;
     }
+
+    method auto_qc_bad_conf (ClassName|Object $self: Str $conf_err) {
+	$self->throw("auto_qc had malformed configuration: $conf_err");
+    }
+
+    method test_minmax (
+	ClassName|Object $self: 
+	Str :$test, 
+	Str :$test_conf, 
+	HashRef :$opts, 
+	ArrayRef :$minmax,
+	Maybe[Num] :$value, 
+	Str :$below_min_reason_fmt = "Value below %.1f (%.2f)",
+	Str :$above_max_reason_fmt = "Value above %.1f (%.2f)",
+	Str :$between_min_max_reason_fmt = "Value between %.1f and %.1f (%.2f)",
+	Str :$at_least_min_reason_fmt = "Value at least %.1f (%.2f)",
+	Str :$up_to_max_reason_fmt = "Value not more than %.1f (%.2f)"
+	) {
+	
+	if (exists $opts->{$test_conf}) {
+	    my $status = 1;
+	    my $reason = "Pass by default";
+	    my $test_min = 0;
+	    my $test_max = 0;
+	    my ($min_threshold, $max_threshold);
+	    
+	    if (defined($value)) {
+		my $config = $opts->{$test_conf};
+		
+		foreach my $mm (@{$minmax}) {
+		    if (exists $config->{$mm}) {
+			my ($failed_threshold, $warning_threshold) = (undef, undef);
+			$failed_threshold = $config->{$mm}->{failed} if exists $config->{$mm}->{failed};
+			$warning_threshold = $config->{$mm}->{warning} if exists $config->{$mm}->{warning};
+
+			if (!defined($failed_threshold) && !defined($warning_threshold)) {
+			    $self->auto_qc_bad_conf($test_conf.'->{'.$mm.'} missing at least one of failed or warning thresholds');
+			}
+			
+			if ($mm eq 'min') {
+			    $test_min = 1;
+			    if (defined($failed_threshold) && $value < $failed_threshold) {
+				# fail
+				$status = 0;
+				$reason = sprintf $below_min_reason_fmt, $failed_threshold, $value;
+			    } elsif (defined($warning_threshold) && $value < $warning_threshold) {
+				# warning
+				$status = 2;
+				$reason = sprintf $below_min_reason_fmt, $warning_threshold, $value;
+			    } else {
+				$min_threshold = $warning_threshold;
+			    }
+			} elsif ($mm eq 'max') {
+			    $test_max = 1;
+			    if (defined($failed_threshold) && $value > $failed_threshold) {
+				# fail
+				$status = 0;
+				$reason = sprintf $above_max_reason_fmt, $failed_threshold, $value;
+			    } elsif (defined($warning_threshold) && $value > $warning_threshold) {
+				# warning
+				$status = 2;
+				$reason = sprintf $above_max_reason_fmt, $warning_threshold, $value;
+			    } else {
+				$max_threshold = $warning_threshold;
+			    }
+			} else {
+			    $self->auto_qc_bad_conf("invalid minmax value $mm passed for test $test ($test_conf)");
+			}
+
+
+
+		    } else {
+			$self->auto_qc_bad_conf("$test_conf missing required key $mm");
+		    }
+		}
+
+		if ($status == 1) {
+		    if ($test_min && $test_max) {
+			$self->auto_qc_bad_conf("autoqc missing between_min_max_reason_fmt for $test") unless $between_min_max_reason_fmt;
+			$reason = sprintf $between_min_max_reason_fmt, $min_threshold, $max_threshold, $value;
+		    } elsif ($test_min) {
+			$reason = sprintf $at_least_min_reason_fmt, $min_threshold, $value;
+			
+		    } elsif ($test_max) {
+			$reason = sprintf $up_to_max_reason_fmt, $max_threshold, $value;
+		    }
+		}
+	    } else { # if (defined($value))
+		# value undefined
+		$status = 2;
+		$reason = "$test value undefined";
+	    }
+	    
+	    $self->qc_results_add({ test => $test, status => $status, reason => $reason });
+	} # if (exists $opts->{$test_conf})
+    }
     
     method auto_qc (ClassName|Object $self: Str :$db!, Str|File :$bam!, Str|File :$bamcheck!, Str :$lane!, Str|File :$auto_qc_settings_file ) {
         my $bam_file = VRPipe::File->get(path => $bam);
@@ -125,169 +237,256 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
         my $vrlane = VRTrack::Lane->new_by_hierarchy_name($vrtrack, $lane) || $self->throw("No lane named '$lane' in database '$db'");
         my $mapstats = $vrlane->latest_mapping || $self->throw("There were no mapstats for lane $lane");
 
+	# load qc settings from file -- parameter keys will be deleted from %$opts as each test is run so that we can check for conf syntax errors at the end
         my $opts = $self->load_config($auto_qc_settings_file);        
 
-        my @qc_status = ();
         my ($test, $status, $reason);
         
-        # check to see if the bam file contains any reads as this crashes other
-        # parts of auto_qc
+	
         my $bam_has_seq = 1;
-        if ($bc->sequences == 0 && $bc->total_length == 0) { # we use the bamcheck result, not $vrlane results, in case we're looking at unimproved exome bam which will have 0 reads and bases in VRTrack
-            $bam_has_seq = 0;
-            push @qc_status, { test => 'Empty bam file check', status => 0, reason => 'The bam file provided for this lane contains no sequences.' };
+        # check to see if the bam file contains any reads as this crashes other
+        # parts of auto_qc (test for $bam_has_seq to protect against this)
+	{
+	    $test = 'Empty bam file check';
+	    if ($bc->sequences == 0 && $bc->total_length == 0) { # we use the bamcheck result, not $vrlane results, in case we're looking at unimproved exome bam which will have 0 reads and bases in VRTrack
+		$bam_has_seq = 0;
+		$status = 0;
+		$reason = "The bam file provided for this lane contains no sequences.";
+	    } else {
+		$status = 1;
+		$reason = "The bam file provided for this lane contains sequence.";
+	    }
+	    $self->qc_results_add({ test => $test, status => $status, reason => $reason });
         }
+	
         
-        # we'll always fail if the npg status is failed
-        my $npg_status = $vrlane->npg_qc_status;
-        if ($npg_status && $npg_status eq 'fail') {
-            push @qc_status, { test => 'NPG QC status check', status => 0, reason => 'The lane failed the NPG QC check, so we auto-fail as well since this data will not be auto-submitted to EGA/ENA.' };
-        }
+	# we'll always fail if the npg status is failed
+	{
+	    my $test = 'NPG QC status check';
+	    my $npg_status = $vrlane->npg_qc_status;
+	    if ($npg_status) {
+		if ($npg_status eq 'fail') {
+		    $status = 0;
+		    $reason = 'The lane failed the NPG QC check, so we auto-fail as well since this data will not be auto-submitted to EGA/ENA.';
+		} elsif ($npg_status eq 'pass') {
+		    $status = 1;
+		    $reason = 'The lane passed the NPG QC check.';
+		} else {
+		    $status = 2;
+		    $reason = "The lane had unknown NPG QC status ($npg_status)";
+		}
+	    }
+	    $self->qc_results_add({ test => $test, status => $status, reason => $reason });
+	}
         
+	
         # genotype check results
-        my @gtype_results;
-        if (exists $opts->{auto_qc_gtype_regex}) {
-            my $auto_qc_gtype_regex = $opts->{auto_qc_gtype_regex};
-            # use gtype info from bam_genotype_checking pipeline, if present
-            my $gstatus;
-            my $gtype_analysis = $meta->{gtype_analysis};
-            if ($gtype_analysis) {
-                ($gstatus) = $gtype_analysis =~ /status=(\S+) expected=(\S+) found=(\S+) ratio=(\S+)/;
-                @gtype_results = ($gstatus, $2, $3, $4);
-            }
-            else {
-                # look to see if there's a gtype status in VRTrack database for
-                # this lane
-                my $gt_found = $mapstats->genotype_found;
-                if ($gt_found) {
-                    my %lane_info = $vrtrack->lane_info($lane);
-                    if ($gt_found eq $mapstats->genotype_expected || $gt_found eq $lane_info{sample} || $gt_found eq $lane_info{individual} || $gt_found eq $lane_info{individual_acc}) {
-                        $gstatus = 'confirmed';
-                    }
-                    else {
-                        $gstatus = 'wrong';
-                    }
-                }
-            }
-            
-            if ($gstatus) {
-                $status = 1;
-                $reason = qq[The status is '$gstatus'.];
-                if ($gstatus !~ /$auto_qc_gtype_regex/) {
-                    $status = 0;
-                    $reason = "The status ($gstatus) does not match the regex ($auto_qc_gtype_regex).";
-                }
-                push @qc_status, { test => 'Genotype check', status => $status, reason => $reason };
-            }
-        }
+	my @gtype_results;
+	{
+	    if (exists $opts->{auto_qc_gtype_regex}) {
+		$test = 'Genotype check';
+		my $auto_qc_gtype_regex = $opts->{auto_qc_gtype_regex};
+		# use gtype info from bam_genotype_checking pipeline, if present
+		my $gstatus;
+		my $gtype_analysis = $meta->{gtype_analysis};
+		if ($gtype_analysis) {
+		    ($gstatus) = $gtype_analysis =~ /status=(\S+) expected=(\S+) found=(\S+) ratio=(\S+)/;
+		    @gtype_results = ($gstatus, $2, $3, $4);
+		}
+		else {
+		    # look to see if there's a gtype status in VRTrack database for
+		    # this lane
+		    my $gt_found = $mapstats->genotype_found;
+		    if ($gt_found) {
+			my %lane_info = $vrtrack->lane_info($lane);
+			if ($gt_found eq $mapstats->genotype_expected || $gt_found eq $lane_info{sample} || $gt_found eq $lane_info{individual} || $gt_found eq $lane_info{individual_acc}) {
+			    $gstatus = 'confirmed';
+			}
+			else {
+			    $gstatus = 'wrong';
+			}
+		    }
+		}
+		
+		if ($gstatus) {
+		    $status = 1;
+		    $reason = qq[The status is '$gstatus'.];
+		    if ($gstatus !~ /$auto_qc_gtype_regex/) {
+			$status = 0;
+			$reason = "The status ($gstatus) does not match the regex ($auto_qc_gtype_regex).";
+		    }
+		    $self->qc_results_add({ test => $test, status => $status, reason => $reason });
+		}
+		delete $opts->{auto_qc_gtype_regex};
+	    }
+	}
+	
         
-        # mapped bases
-        if (exists $opts->{auto_qc_mapped_base_percentage} && $bam_has_seq) {
-            my $auto_qc_mapped_base_percentage = $opts->{auto_qc_mapped_base_percentage};
-            if (exists $auto_qc_mapped_base_percentage->{min}) {
-                my ($min_failed,$min_warning) = (undef,undef);
-                $min_failed = $auto_qc_mapped_base_percentage->{min}->{failed} if exists $auto_qc_mapped_base_percentage->{min}->{failed};
-                $min_warning = $auto_qc_mapped_base_percentage->{min}->{warning} if exists $auto_qc_mapped_base_percentage->{min}->{warning};
+	{ # mapped bases
+	    my $bases_mapped_pct = 0;
+	    if ($bam_has_seq) {
+		my $clip_bases     = $mapstats->clip_bases;
+		my $bases_mapped_c = $mapstats->bases_mapped;
+		$bases_mapped_pct  = 100 * $bases_mapped_c / $clip_bases;
+	    }	    
+	    $self->test_minmax(
+		test      => 'Bases mapped',
+		test_conf => 'auto_qc_mapped_base_percentage', 
+		opts      => $opts, 
+		minmax    => ['min'],
+		value     => $bases_mapped_pct,
+		below_min_reason_fmt => "Less than %.1f%% bases mapped after clipping (%.2f%%).",
+		at_least_min_reason_fmt => "At least %.1f%% bases mapped after clipping (%.2f%%).",
+		);
+	    delete $opts->{auto_qc_mapped_base_percentage};
+	}
+	
+	
+	{ # duplicate reads
+	    my $dup_reads_pct = 0;
+	    if ($bam_has_seq) {
+		my $mapped_reads = $mapstats->reads_mapped;
+		my $dup_reads    = $mapped_reads - $mapstats->rmdup_reads_mapped;
+		$dup_reads_pct   = 100 * $dup_reads / $mapped_reads;
+	    }
+	    $self->test_minmax(
+		test      => 'Duplicate reads',
+		test_conf => 'auto_qc_duplicate_read_percentage',
+		opts      => $opts,
+		minmax    => ['max'],
+		value     => $dup_reads_pct,
+		above_max_reason_fmt => "More than %.1f%% reads were duplicates (%.2f%%).",
+		up_to_max_reason_fmt => "%.1f%% or less reads were duplicates (%.2f%%).",
+		);
+	    delete $opts->{auto_qc_duplicate_read_percentage};
+	}
 
-                $status = 1;
-                my $clip_bases     = $mapstats->clip_bases;
-                my $bases_mapped_c = $mapstats->bases_mapped;
-                my $value          = 100 * $bases_mapped_c / $clip_bases;
-                $reason = sprintf "At least %.1f%% and %.1f%% bases mapped after clipping (%.2f%%).", $min_failed, $min_warning, $value;
-                
-                if (defined($min_failed) && $value < $min_failed) {
-                   $status = 0;
-                   $reason = sprintf "Less than %.1f%% bases mapped after clipping (%.2f%%).", $min_failed, $value;
-                } elsif (defined($min_warning) && $value < $min_warning) {
-                   $status = 2;
-                   $reason = sprintf "Less than %.1f%% bases mapped after clipping (%.2f%%).", $min_warning, $value;
-                }
-                push @qc_status, { test => 'Mapped bases', status => $status, reason => $reason };
-             }
-       }
+	
+        { # properly paired mapped reads
+	    my $paired_reads_pct = 0;
+	    if ($bam_has_seq) {
+		my $mapped_reads     = $mapstats->reads_mapped;
+		my $paired_reads     = $mapstats->rmdup_reads_mapped;
+		$paired_reads_pct = 100 * $paired_reads / $mapped_reads;
+	    }
+	    $self->test_minmax(
+		test      => 'Reads mapped in a proper pair',
+		test_conf => 'auto_qc_mapped_reads_properly_paired_percentage',
+		opts      => $opts,
+		minmax    => ['min'],
+		value     => $paired_reads_pct,
+		below_min_reason_fmt => "Less than %.1f%% reads that were mapped are in a proper pair (%.2f%%).",
+		at_least_min_reason_fmt => "At least %.1f%% reads that were mapped are in a proper pair (%.2f%%).",
+		);
+	    delete $opts->{auto_qc_mapped_reads_properly_paired_percentage};
+	}
+	
         
-        # duplicate reads
-        if (exists $opts->{auto_qc_duplicate_read_percentage} && $bam_has_seq) {
-            my $auto_qc_duplicate_read_percentage = $opts->{auto_qc_duplicate_read_percentage};
-            if (exists $auto_qc_duplicate_read_percentage->{max}) {
-                my $max = $auto_qc_duplicate_read_percentage->{max}->{failed};
-                $status = 1;
-                my $mapped_reads = $mapstats->reads_mapped;
-                my $dup_reads    = $mapped_reads - $mapstats->rmdup_reads_mapped;
-                my $value        = 100 * $dup_reads / $mapped_reads;
-                $reason = sprintf "%.1f%% or fewer reads were duplicates (%.2f%%).", $max, $value;
-                if ($value > $max) {
-                    $status = 0;
-                    $reason = sprintf "More than %.1f%% reads were duplicates (%.2f%%).", $max, $value;
-                }
-                push @qc_status, { test => 'Duplicate reads', status => $status, reason => $reason };
-            }
-        }
+	{ # error rate
+	    my $error_rate = $mapstats->error_rate;
+	    $self->test_minmax(
+		test      => 'Error rate',
+		test_conf => 'auto_qc_error_rate',
+		opts      => $opts,
+		minmax    => ['max'],
+		value     => $error_rate,
+		above_max_reason_fmt => "The error rate is higher than %.2f (%.2f).",
+		up_to_max_reason_fmt => "The error rate is lower than %.2f (%.2f).",
+		);
+	    delete $opts->{auto_qc_error_rate};
+	}
+	
         
-        # properly paired mapped reads
-        if (exists $opts->{auto_qc_mapped_reads_properly_paired_percentage} && $bam_has_seq) {
-            my $auto_qc_mapped_reads_properly_paired_percentage = $opts->{auto_qc_mapped_reads_properly_paired_percentage};
-            if (exists $auto_qc_mapped_reads_properly_paired_percentage->{min}) {
-                my $min = $auto_qc_mapped_reads_properly_paired_percentage->{min}->{failed};
-                $status = 1;
-                my $mapped_reads = $mapstats->reads_mapped;
-                my $paired_reads = $mapstats->rmdup_reads_mapped;
-                my $value        = 100 * $paired_reads / $mapped_reads;
-                $reason = sprintf "%.1f%% or more reads that were mapped are in a proper pair (%.2f%%).", $min, $value;
-                if ($value < $min) {
-                    $status = 0;
-                    $reason = sprintf "Less than %.1f%% of reads that were mapped are in a proper pair (%.2f%%).", $min, $value;
-                }
-                push @qc_status, { test => 'Reads mapped in a proper pair', status => $status, reason => $reason };
-            }
-        }
-        
-        # error rate
-        if (exists $opts->{auto_qc_error_rate}) {
-            my $auto_qc_error_rate = $opts->{auto_qc_error_rate};
-            my $max = $auto_qc_error_rate->{max}->{failed};
-            $status = 1;
-            my $error_rate = $mapstats->error_rate;
-            $reason = "The error rate is lower than $max ($error_rate).";
-            if ($error_rate > $max) {
-                $status = 0;
-                $reason = "The error rate is higher than $max ($error_rate).";
-            }
-            push @qc_status, { test => 'Error rate', status => $status, reason => $reason };
-        }
-        
-        # number of insertions vs deletions
-        if (exists $opts->{auto_qc_ins_to_del_ratio}) {
-            my $auto_qc_ins_to_del_ratio = $opts->{auto_qc_ins_to_del_ratio};
+	{ # number of insertions vs deletions
             my ($inum, $dnum);
             my $counts = $bc->indel_dist();
             for my $row (@$counts) {
                 $inum += $$row[1];
                 $dnum += $$row[2];
             }
-            if (exists $opts->{auto_qc_ins_to_del_ratio}->{max}) {
-                my $max = $auto_qc_ins_to_del_ratio->{max}->{failed};
-                $status = 1;
-                $reason = "The Ins/Del ratio is smaller than $max ($inum/$dnum).";
-                if (!$dnum or $inum / $dnum > $max) {
-                    $status = 0;
-                    $reason = "The Ins/Del ratio is bigger than $max ($inum/$dnum).";
-                }
-                push @qc_status, { test => 'InDel ratio', status => $status, reason => $reason };
-            }
-            if (exists $opts->{auto_qc_ins_to_del_ratio}->{min}) {
-                my $min = $auto_qc_ins_to_del_ratio->{min}->{failed};
-                $status = 1;
-                $reason = "The Ins/Del ratio is greater than $min ($inum/$dnum).";
-                if (!$inum or $inum / $dnum < $min) {
-                    $status = 0;
-                    $reason = "The Ins/Del ratio is smaller than $min ($inum/$dnum).";
-                }
-                push @qc_status, { test => 'InDel ratio minimum', status => $status, reason => $reason };
-            }
-        }
+	    my $ins_to_del_ratio;
+	    if ($dnum) {
+		$ins_to_del_ratio = $inum / $dnum;
+	    } else {
+		# set to MAX_INT
+		$ins_to_del_ratio = 0+sprintf('%u', -1);
+	    }
+	    $self->test_minmax(
+		test      => 'InDel ratio',
+		test_conf => 'auto_qc_ins_to_del_ratio',
+		opts      => $opts,
+		minmax    => ['min', 'max'],
+		value     => $ins_to_del_ratio,
+		below_min_reason_fmt => "The Ins/Del ratio is less than %.1f (%.2f).",
+		above_max_reason_fmt => "The Ins/Del ratio is greater than %.1f (%.2f).",
+		between_min_max_reason_fmt => "The Ins/Del ratio is between %.1f and %.1f (%.2f).",
+		);
+	    delete $opts->{auto_qc_ins_to_del_ratio};
+	}
+	
         
-        # insert size
+        # overlapping base duplicate percent
+        # calculate the proportion of mapped bases duplicated e.g. if a fragment
+        # is 160bp - then 40bp out of 200bp sequenced (or 20% of bases sequenced
+        # in the fragment are duplicate sequence)
+        #
+        #------------->
+        #          <------------
+        #        160bp
+        #|---------------------|
+        #          |--|
+        #          40bp
+	$test = 'Overlap duplicate base percent';
+	if ($bam_has_seq && $vrlane->is_paired()) {
+	    my $lengths = $bc->read_lengths();
+	    if (@$lengths == 1) {
+		my $seqlen = $lengths->[0]->[0];
+		my $is_lines = $bc->insert_size() || [];
+		
+		if (@$is_lines) {
+		    my ($short_paired_reads, $normal_paired_reads, $total_paired_reads, $dup_mapped_bases, $tot_mapped_bases) = 0;
+		    foreach my $is_line (@$is_lines) {
+			my ($is, $pairs_total, $inward, $outward, $other) = @$is_line;
+			next unless $pairs_total;
+			
+			if (($seqlen * 2) > $is) {
+			    $short_paired_reads += $pairs_total;
+			    $dup_mapped_bases += $pairs_total * (($seqlen * 2) - $is);
+			}
+			else {
+			    $normal_paired_reads += $pairs_total;
+			}
+			$total_paired_reads += $pairs_total;
+			$tot_mapped_bases += $pairs_total * ($seqlen * 2);
+		    }
+		    
+		    my $overlap_dup_base_pct = sprintf("%0.1f", ($dup_mapped_bases * 100) / $tot_mapped_bases);
+		    $self->test_minmax(
+			test      => $test,
+			test_conf => 'auto_qc_overlapping_base_duplicate_percent',
+			opts      => $opts,
+			minmax    => ['max'],
+			value     => $overlap_dup_base_pct,
+			above_max_reason_fmt => "The percent of bases duplicated due to reads of a pair overlapping is greater than %.2f%% (%.2f%%).",
+			up_to_max_reason_fmt => "The percent of bases duplicated due to reads of a pair overlapping is less than or equal to %.2f%% (%.2f%%).",
+			);
+		} else {
+		    # no insert-size lines in bamcheck?
+		    $reason = "bamcheck file did not contain insert-size lines";
+		    $status = 2;
+		    $self->qc_results_add({ test => $test, status => $status, reason => $reason });
+		}
+	    } else {
+		# multiple read lengths, cannot run this test
+		$reason = "Multiple read lengths in study, cannot run test of bases duplicated due to read of a pair overlapping";
+		$status = 2;
+                $self->qc_results_add({ test => $test, status => $status, reason => $reason });
+	    }
+	}
+	delete $opts->{auto_qc_overlapping_base_duplicate_percent} if exists $opts->{auto_qc_overlapping_base_duplicate_percent};
+	
+
+        # insert size 
         my $lib_to_update;
         my $lib_status;
         if ($vrlane->is_paired() && exists $opts->{auto_qc_insert_peak} && exists $opts->{auto_qc_insert_peak}->{window} && exists $opts->{auto_qc_insert_peak}->{reads} && $bam_has_seq) {
@@ -296,10 +495,10 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
             $test = 'Insert size';
             
             if ($mapstats->reads_paired == 0) {
-                push @qc_status, { test => $test, status => 0, reason => 'Zero paired reads, yet flagged as paired' };
+                $self->qc_results_add({ test => $test, status => 0, reason => 'Zero paired reads, yet flagged as paired' });
             }
             elsif ($mapstats->mean_insert == 0 || !$bc->insert_size()) {
-                push @qc_status, { test => $test, status => 0, reason => 'The insert size not available, yet flagged as paired' };
+                $self->qc_results_add({ test => $test, status => 0, reason => 'The insert size not available, yet flagged as paired' });
             }
             else {
                 # only libraries can be failed based on wrong insert size. The
@@ -316,239 +515,136 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
                     $status = 0;
                     $reason = sprintf "Fail library, less than %.1f%% of the inserts are within %.1f%% of max peak (%.2f%%).", $within_peak, $peak_win, $amount;
                 }
-                push @qc_status, { test => $test, status => 1, reason => $reason };
+                $self->qc_results_add({ test => $test, status => 1, reason => $reason });
                 
                 $reason = sprintf "%.1f%% of inserts are contained within %.1f%% of the max peak (%.2f%%).", $within_peak, $peak_win, $range;
                 if ($range > $peak_win) {
                     $status = 0;
                     $reason = sprintf "Fail library, %.1f%% of inserts are not within %.1f%% of the max peak (%.2f%%).", $within_peak, $peak_win, $range;
                 }
-                push @qc_status, { test => 'Insert size (rev)', status => 1, reason => $reason };
+                $self->qc_results_add({ test => 'Insert size (rev)', status => 1, reason => $reason });
                 
                 $lib_to_update = VRTrack::Library->new_by_field_value($vrtrack, 'library_id', $vrlane->library_id()) or $self->throw("No vrtrack library for lane $lane?");
                 $lib_status = $status ? 'passed' : 'failed';
             }
         }
-        
-        # overlapping base duplicate percent
-        # calculate the proportion of mapped bases duplicated e.g. if a fragment
-        # is 160bp - then 40bp out of 200bp sequenced (or 20% of bases sequenced
-        # in the fragment are duplicate sequence)
-        #
-        #------------->
-        #          <------------
-        #        160bp
-        #|---------------------|
-        #          |--|
-        #          40bp
-        if (exists $opts->{auto_qc_overlapping_base_duplicate_percent}) {
-            my $auto_qc_overlapping_base_duplicate_percent = $opts->{auto_qc_overlapping_base_duplicate_percent}->{max}->{failed};
-            my $lengths = $bc->read_lengths();
-            if (@$lengths == 1) {
-                my $seqlen = $lengths->[0]->[0];
-                my $is_lines = $bc->insert_size() || [];
-                
-                if (@$is_lines) {
-                    my ($short_paired_reads, $normal_paired_reads, $total_paired_reads, $dup_mapped_bases, $tot_mapped_bases);
-                    foreach my $is_line (@$is_lines) {
-                        my ($is, $pairs_total, $inward, $outward, $other) = @$is_line;
-                        next unless $pairs_total;
-                        
-                        if (($seqlen * 2) > $is) {
-                            $short_paired_reads += $pairs_total;
-                            $dup_mapped_bases += $pairs_total * (($seqlen * 2) - $is);
-                        }
-                        else {
-                            $normal_paired_reads += $pairs_total;
-                        }
-                        $total_paired_reads += $pairs_total;
-                        $tot_mapped_bases += $pairs_total * ($seqlen * 2);
-                    }
-                    
-                    my $percent = sprintf("%0.1f", ($dup_mapped_bases * 100) / $tot_mapped_bases);
-                    my $max = $auto_qc_overlapping_base_duplicate_percent;
-                    
-                    $reason = "The percent of bases duplicated due to reads of a pair overlapping ($percent) is smaller than or equal to $max.";
-                    my $status = 1;
-                    if ($percent > $max) {
-                        $reason = "The percent of bases duplicated due to reads of a pair overlapping ($percent) is greater than $max.";
-                        $status = 0;
-                    }
-                    push @qc_status, { test => 'Overlap duplicate base percent', status => $status, reason => $reason };
-                }
-            }
-        }
-        
-        # Maximum indels per cycle, check if the highest indels per cycle is bigger than Nx the median, where N is the parameter
-        if (exists $opts->{auto_qc_ic_above_median}) {
-            my $max_fail = $opts->{auto_qc_ic_above_median}->{max}->{failed};
-            $status = 1;
-            $reason = "All indels per cycle less then ${max_fail}X of the median";
-            
-            # Get median and max of indel fwd/rev cycle counts
-            my $counts = $bc->indel_cycles();
-            my (@vals, @med, @max);
-            for my $row (@$counts) {
-                for (my $i = 0; $i < 4; $i++) {
-                    push @{ $vals[$i] }, $$row[$i + 1];
-                }
-            }
-            for (my $i = 0; $i < 4; $i++) {
-                my @sorted = sort { $a <=> $b } @{ $vals[$i] };
-                my $n = int(scalar @sorted / 2);
-                $med[$i] = $sorted[$n];
-                $max[$i] = $sorted[-1];
-            }
-            
-            for (my $i = 0; $i < 4; $i++) {
-                if ($max[$i] > $max_fail * $med[$i]) {
-                    $status = 0;
-                    $reason = "Some indels per cycle exceed ${max_fail}X of the median";
-                }
-            }
-            push @qc_status, { test => 'InDels per Cycle', status => $status, reason => $reason };
-        }
-
+        delete $opts->{auto_qc_insert_peak} if exists $opts->{auto_qc_insert_peak};
+	
+	
         #######
         # HGI #
         #######
-        if (exists $opts->{auto_qc_indel_percentage_deviation}) {
-            my ($max_failed, $max_warning) = (undef,undef);
-            $max_failed = $opts->{auto_qc_indel_percentage_deviation}->{max}->{failed};
-            $max_warning = $opts->{auto_qc_indel_percentage_deviation}->{max}->{warning};
-            $status = 1;
-            $reason = "All indels per cycle deviate no more then ${max_failed} and ${max_warning} percent from baseline.";
 
-            if (!defined($bc->fwd_percent_insertions_above_baseline()) && (defined($max_failed) || defined($max_warning))) {
-                $status = 0;
-                $reason = "Fwd insertions not defined.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-	    } elsif (defined($max_failed) && $bc->fwd_percent_insertions_above_baseline() > $max_failed) {
-                $status = 0;
-                $reason = "Fwd insertions deviate more than ${max_failed} percent above the baseline model.";
-	        push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            } elsif (defined($max_warning) && $bc->fwd_percent_insertions_above_baseline() > $max_warning) {
-                $status = 2;
-                $reason = "Fwd insertions deviate more than ${max_warning} percent above the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            }
+        # indel vs read cycle peak detection
+	$self->test_minmax(
+	    test      => 'Fwd insertions vs read cycle pct above baseline',
+	    test_conf => 'auto_qc_indel_percentage_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->fwd_percent_insertions_above_baseline(),
+	    above_max_reason_fmt => "Forward insertions deviate more than %.2f%% above the baseline model (%.2f%%).",
+	    up_to_max_reason_fmt => "Forward insertions are within %.2f%% of the baseline (%.2f%%).",
+	    );
 
-            if (!defined($bc->fwd_percent_insertions_below_baseline()) && (defined($max_failed) || defined($max_warning))) {
-# Already emitted this
-            } elsif (defined($max_failed) && $bc->fwd_percent_insertions_below_baseline() > $max_failed) {
-                $status = 0;
-                $reason = "Fwd insertions deviate more than ${max_failed} percent below the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            } elsif (defined($max_warning) && $bc->fwd_percent_insertions_below_baseline() > $max_warning) {
-                $status = 2;
-                $reason = "Fwd insertions deviate more than ${max_warning} percent below the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            }
+	$self->test_minmax(
+	    test      => 'Fwd insertions vs read cycle pct below baseline',
+	    test_conf => 'auto_qc_indel_percentage_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->fwd_percent_insertions_below_baseline(),
+	    above_max_reason_fmt => "Forward insertions deviate more than %.2f%% below the baseline model (%.2f%%).",
+	    up_to_max_reason_fmt => "Forward insertions are within %.2f%% of the baseline (%.2f%%).",
+	    );
 
-            if (!defined($bc->fwd_percent_deletions_above_baseline()) && (defined($max_failed) || defined($max_warning))) {
-                $status = 0;
-                $reason = "Fwd deletions not defined.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            } elsif (defined($max_failed) && $bc->fwd_percent_deletions_above_baseline() > $max_failed) {
-                $status = 0;
-                $reason = "Fwd deletions deviate more than ${max_failed} percent above the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            } elsif (defined($max_warning) && $bc->fwd_percent_deletions_above_baseline() > $max_warning) {
-                $status = 2;
-                $reason = "Fwd deletions deviate more than ${max_warning} percent above the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            }
+	$self->test_minmax(
+	    test      => 'Fwd deletions vs read cycle pct above baseline',
+	    test_conf => 'auto_qc_indel_percentage_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->fwd_percent_deletions_above_baseline(),
+	    above_max_reason_fmt => "Forward deletions deviate more than %.2f%% above the baseline model (%.2f%%).",
+	    up_to_max_reason_fmt => "Forward deletions are within %.2f%% of the baseline (%.2f%%).",
+	    );
 
-            if (!defined($bc->fwd_percent_deletions_below_baseline()) && (defined($max_failed) || defined($max_warning))) {
-# Already emitted this
-            } elsif (defined($max_failed) && $bc->fwd_percent_deletions_below_baseline() > $max_failed) {
-                $status = 0;
-                $reason = "Fwd deletions deviate more than ${max_failed} percent below the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            } elsif (defined($max_warning) && $bc->fwd_percent_deletions_below_baseline() > $max_warning) {
-                $status = 2;
-                $reason = "Fwd deletions deviate more than ${max_warning} percent below the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            }
+	$self->test_minmax(
+	    test      => 'Fwd deletions vs read cycle pct below baseline',
+	    test_conf => 'auto_qc_indel_percentage_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->fwd_percent_deletions_below_baseline(),
+	    above_max_reason_fmt => "Forward deletions deviate more than %.2f%% below the baseline model (%.2f%%).",
+	    up_to_max_reason_fmt => "Forward deletions are within %.2f%% of the baseline (%.2f%%).",
+	    );
 
-            if (!defined($bc->rev_percent_insertions_above_baseline()) && (defined($max_failed) || defined($max_warning))) {
-                $status = 0;
-                $reason = "Rev insertions not defined.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            } elsif (defined($max_failed) && $bc->rev_percent_insertions_above_baseline() > $max_failed) {
-                $status = 0;
-                $reason = "Rev insertions deviate more than ${max_failed} percent above the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            } elsif (defined($max_warning) && $bc->rev_percent_insertions_above_baseline() > $max_warning) {
-                $status = 2;
-                $reason = "Rev insertions deviate more than ${max_warning} percent above the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            }
+	$self->test_minmax(
+	    test      => 'Rev insertions vs read cycle pct above baseline',
+	    test_conf => 'auto_qc_indel_percentage_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->rev_percent_insertions_above_baseline(),
+	    above_max_reason_fmt => "Reverse insertions deviate more than %.2f%% above the baseline model (%.2f%%).",
+	    up_to_max_reason_fmt => "Reverse insertions are within %.2f%% of the baseline (%.2f%%).",
+	    );
 
-            if (!defined($bc->rev_percent_insertions_below_baseline()) && (defined($max_failed) || defined($max_warning))) {
-# Already emitted this
-            } elsif (defined($max_failed) && $bc->rev_percent_insertions_below_baseline() > $max_failed) {
-                $status = 0;
-                $reason = "Rev insertions deviate more than ${max_failed} percent below the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            } elsif (defined($max_warning) && $bc->rev_percent_insertions_below_baseline() > $max_warning) {
-                $status = 2;
-                $reason = "Rev insertions deviate more than ${max_warning} percent below the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            }
+	$self->test_minmax(
+	    test      => 'Rev insertions vs read cycle pct below baseline',
+	    test_conf => 'auto_qc_indel_percentage_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->rev_percent_insertions_below_baseline(),
+	    above_max_reason_fmt => "Reverse insertions deviate more than %.2f%% below the baseline model (%.2f%%).",
+	    up_to_max_reason_fmt => "Reverse insertions are within %.2f%% of the baseline (%.2f%%).",
+	    );
 
-            if (!defined($bc->rev_percent_deletions_above_baseline()) && (defined($max_failed) || defined($max_warning))) {
-                $status = 0;
-                $reason = "Rev deletions not defined.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            } elsif (defined($max_failed) && $bc->rev_percent_deletions_above_baseline() > $max_failed) {
-                $status = 0;
-                $reason = "Rev deletions deviate more than ${max_failed} percent above the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            } elsif (defined($max_warning) && $bc->rev_percent_deletions_above_baseline() > $max_warning) {
-                $status = 2;
-                $reason = "Rev deletions deviate more than ${max_warning} percent above the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            }
+	$self->test_minmax(
+	    test      => 'Rev deletions vs read cycle pct above baseline',
+	    test_conf => 'auto_qc_indel_percentage_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->rev_percent_deletions_above_baseline(),
+	    above_max_reason_fmt => "Reverse deletions deviate more than %.2f%% above the baseline model (%.2f%%).",
+	    up_to_max_reason_fmt => "Reverse deletions are within %.2f%% of the baseline (%.2f%%).",
+	    );
 
-            if (!defined($bc->rev_percent_deletions_below_baseline()) && (defined($max_failed) || defined($max_warning))) {
-# Already emitted this
-            } elsif (defined($max_failed) && $bc->rev_percent_deletions_below_baseline() > $max_failed) {
-                $status = 0;
-                $reason = "Rev deletions deviate more than ${max_failed} percent below the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            } elsif (defined($max_warning) && $bc->rev_percent_deletions_below_baseline() > $max_warning) {
-                $status = 2;
-                $reason = "Rev deletions deviate more than ${max_warning} percent below the baseline model.";
-                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
-            }
+	$self->test_minmax(
+	    test      => 'Rev deletions vs read cycle pct below baseline',
+	    test_conf => 'auto_qc_indel_percentage_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->rev_percent_deletions_below_baseline(),
+	    above_max_reason_fmt => "Reverse deletions deviate more than %.2f%% below the baseline model (%.2f%%).",
+	    up_to_max_reason_fmt => "Reverse deletions are within %.2f%% of the baseline (%.2f%%).",
+	    );
 
-            push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason } unless $status == 0;
-        }
+	delete $opts->{auto_qc_indel_percentage_deviation};
 
-        if (exists $opts->{auto_qc_qual_contig_cycle_dropoff}) {
-            my ($max_failed,$max_warning) = (undef, undef);
-            $max_failed = $opts->{auto_qc_qual_contig_cycle_dropoff}->{max}->{failed} if exists($opts->{auto_qc_qual_contig_cycle_dropoff}->{max}->{failed});
-            $max_warning = $opts->{auto_qc_qual_contig_cycle_dropoff}->{max}->{warning} if exists($opts->{auto_qc_qual_contig_cycle_dropoff}->{max}->{warning});
-            $status = 1;
-            $reason = "Quality drops off no more than ${max_failed} and ${max_warning} contigious times.";
 
-            if (defined($max_failed) && $bc->contiguous_cycle_dropoff_count() > $max_failed) {
-                $status = 0;
-                $reason = "Quality drops off more than ${max_failed} contigious times.";
-            } elsif (defined($max_warning) && $bc->contiguous_cycle_dropoff_count() > $max_warning) {
-                $status = 2;
-                $reason = "Quality drops off more than ${max_warning} contigious times.";
-            }
+        # quality vs read cycle contiguous quality dropoff
+	$self->test_minmax(
+	    test      => 'Quality dropoff',
+	    test_conf => 'auto_qc_qual_contig_cycle_dropoff',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->contiguous_cycle_dropoff_count(),
+	    above_max_reason_fmt => "Quality drops for more than %d contiguous read cycles (%d).",
+	    up_to_max_reason_fmt => "Quality does not drop for more than %d contiguous read cycles (%d).",
+	    );
+	delete $opts->{auto_qc_qual_contig_cycle_dropoff};
 
-            push @qc_status, { test => 'Quality Dropoff', status => $status, reason => $reason };
-        }
+
+
+	# Finally, check if there are any keys left in opts
+	# if so, there was an unrecognized option in the config file
+	if (keys %{$opts}) {
+	    $self->auto_qc_bad_conf("unrecognized options in config file ($auto_qc_settings_file): ".join(",", keys %{$opts})."\n");
+	}
+
         
         # now output the results
         
         # Get overall autoqc result
         $status = 1;
-        for my $stat (@qc_status) {
+        for my $stat ($self->qc_results_elements()) {
             if (!$stat->{status}) {
                 $status = 0;
                 last;
@@ -578,7 +674,13 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
                 }
                 
                 # output autoQC results to the mapping stats
-                for my $stat (@qc_status) {
+                for my $stat ($self->qc_results_elements()) {
+		    if (length($stat->{test}) > $TEST_MAX) {
+			$self->auto_qc_bad_conf("Test string is too long for test ".$stat->{test}."\n");
+		    }
+		    if (length($stat->{reason}) > $REASON_MAX) {
+			$self->auto_qc_bad_conf("Reason string is too long for test ".$stat->{test}.": ".$stat->{reason}."\n");
+		    }
                     $mapstats->add_autoqc($stat->{test}, $stat->{status}, $stat->{reason});
                 }
                 $mapstats->update;
