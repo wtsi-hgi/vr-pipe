@@ -151,6 +151,15 @@ class VRPipe::Steps::irods with VRPipe::StepRole {
             $self->throw("expected md5 checksum in metadata ($expected_md5) did not match md5 of $source in IRODS ($irodschksum); aborted");
         }
         
+        # check we've not downloaded it already
+        if ( -e $dest ) {
+            my $already_got_it = $dest_file->verify_md5($dest, $expected_md5);
+            if ( $already_got_it ) {
+                $dest_file->update_stats_from_disc;
+                chmod 0664, $dest;
+                return;
+            }
+        }
         # -K: checksum
         # -Q: use UDP rather than TCP
         # -f: force overwrite

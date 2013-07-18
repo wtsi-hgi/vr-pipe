@@ -312,49 +312,49 @@ class VRPipe::Parser::bamcheck with VRPipe::ParserRole {
 
     has 'fwd_percent_insertions_above_baseline' => (
         is     => 'ro',
-        isa    => 'Num',
+        isa    => 'Maybe[Num]',
         writer => '_fwd_percent_insertions_above_baseline',
     );
     
     has 'fwd_percent_insertions_below_baseline' => (
         is     => 'ro',
-        isa    => 'Num',
+        isa    => 'Maybe[Num]',
         writer => '_fwd_percent_insertions_below_baseline',
     );
 
     has 'fwd_percent_deletions_above_baseline' => (
         is     => 'ro',
-        isa    => 'Num',
+        isa    => 'Maybe[Num]',
         writer => '_fwd_percent_deletions_above_baseline',
     );
 
     has 'fwd_percent_deletions_below_baseline' => (
         is     => 'ro',
-        isa    => 'Num',
+        isa    => 'Maybe[Num]',
         writer => '_fwd_percent_deletions_below_baseline',
     );
 
     has 'rev_percent_insertions_above_baseline' => (
         is     => 'ro',
-        isa    => 'Num',
+        isa    => 'Maybe[Num]',
         writer => '_rev_percent_insertions_above_baseline',
     );
 
     has 'rev_percent_insertions_below_baseline' => (
         is     => 'ro',
-        isa    => 'Num',
+        isa    => 'Maybe[Num]',
         writer => '_rev_percent_insertions_below_baseline',
     );
 
     has 'rev_percent_deletions_above_baseline' => (
         is     => 'ro',
-        isa    => 'Num',
+        isa    => 'Maybe[Num]',
         writer => '_rev_percent_deletions_above_baseline',
     );
 
     has 'rev_percent_deletions_below_baseline' => (
         is     => 'ro',
-        isa    => 'Num',
+        isa    => 'Maybe[Num]',
         writer => '_rev_percent_deletions_below_baseline',
     );
 
@@ -519,6 +519,7 @@ class VRPipe::Parser::bamcheck with VRPipe::ParserRole {
                     $self->warn("unexpected SN line $orig_method");
                     next;
                 }
+                $value = undef if $method =~ /^_fwd_|^_rev_/ && $value eq'NA';
                 $self->$method($value);
                 $saw++;
             }

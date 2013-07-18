@@ -419,7 +419,11 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
             $status = 1;
             $reason = "All indels per cycle deviate no more then ${max_failed} and ${max_warning} percent from baseline.";
 
-            if (defined($max_failed) && $bc->fwd_percent_insertions_above_baseline() > $max_failed) {
+            if (!defined($bc->fwd_percent_insertions_above_baseline()) && (defined($max_failed) || defined($max_warning))) {
+                $status = 0;
+                $reason = "Fwd insertions not defined.";
+                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
+	    } elsif (defined($max_failed) && $bc->fwd_percent_insertions_above_baseline() > $max_failed) {
                 $status = 0;
                 $reason = "Fwd insertions deviate more than ${max_failed} percent above the baseline model.";
 	        push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
@@ -429,7 +433,9 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
             }
 
-            if (defined($max_failed) && $bc->fwd_percent_insertions_below_baseline() > $max_failed) {
+            if (!defined($bc->fwd_percent_insertions_below_baseline()) && (defined($max_failed) || defined($max_warning))) {
+# Already emitted this
+            } elsif (defined($max_failed) && $bc->fwd_percent_insertions_below_baseline() > $max_failed) {
                 $status = 0;
                 $reason = "Fwd insertions deviate more than ${max_failed} percent below the baseline model.";
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
@@ -439,7 +445,11 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
             }
 
-            if (defined($max_failed) && $bc->fwd_percent_deletions_above_baseline() > $max_failed) {
+            if (!defined($bc->fwd_percent_deletions_above_baseline()) && (defined($max_failed) || defined($max_warning))) {
+                $status = 0;
+                $reason = "Fwd deletions not defined.";
+                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
+            } elsif (defined($max_failed) && $bc->fwd_percent_deletions_above_baseline() > $max_failed) {
                 $status = 0;
                 $reason = "Fwd deletions deviate more than ${max_failed} percent above the baseline model.";
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
@@ -449,7 +459,9 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
             }
 
-            if (defined($max_failed) && $bc->fwd_percent_deletions_below_baseline() > $max_failed) {
+            if (!defined($bc->fwd_percent_deletions_below_baseline()) && (defined($max_failed) || defined($max_warning))) {
+# Already emitted this
+            } elsif (defined($max_failed) && $bc->fwd_percent_deletions_below_baseline() > $max_failed) {
                 $status = 0;
                 $reason = "Fwd deletions deviate more than ${max_failed} percent below the baseline model.";
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
@@ -459,7 +471,11 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
             }
 
-            if (defined($max_failed) && $bc->rev_percent_insertions_above_baseline() > $max_failed) {
+            if (!defined($bc->rev_percent_insertions_above_baseline()) && (defined($max_failed) || defined($max_warning))) {
+                $status = 0;
+                $reason = "Rev insertions not defined.";
+                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
+            } elsif (defined($max_failed) && $bc->rev_percent_insertions_above_baseline() > $max_failed) {
                 $status = 0;
                 $reason = "Rev insertions deviate more than ${max_failed} percent above the baseline model.";
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
@@ -469,7 +485,9 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
             }
 
-            if (defined($max_failed) && $bc->rev_percent_insertions_below_baseline() > $max_failed) {
+            if (!defined($bc->rev_percent_insertions_below_baseline()) && (defined($max_failed) || defined($max_warning))) {
+# Already emitted this
+            } elsif (defined($max_failed) && $bc->rev_percent_insertions_below_baseline() > $max_failed) {
                 $status = 0;
                 $reason = "Rev insertions deviate more than ${max_failed} percent below the baseline model.";
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
@@ -479,7 +497,11 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
             }
 
-            if (defined($max_failed) && $bc->rev_percent_deletions_above_baseline() > $max_failed) {
+            if (!defined($bc->rev_percent_deletions_above_baseline()) && (defined($max_failed) || defined($max_warning))) {
+                $status = 0;
+                $reason = "Rev deletions not defined.";
+                push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
+            } elsif (defined($max_failed) && $bc->rev_percent_deletions_above_baseline() > $max_failed) {
                 $status = 0;
                 $reason = "Rev deletions deviate more than ${max_failed} percent above the baseline model.";
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
@@ -489,7 +511,9 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
             }
 
-            if (defined($max_failed) && $bc->rev_percent_deletions_below_baseline() > $max_failed) {
+            if (!defined($bc->rev_percent_deletions_below_baseline()) && (defined($max_failed) || defined($max_warning))) {
+# Already emitted this
+            } elsif (defined($max_failed) && $bc->rev_percent_deletions_below_baseline() > $max_failed) {
                 $status = 0;
                 $reason = "Rev deletions deviate more than ${max_failed} percent below the baseline model.";
                 push @qc_status, { test => 'Indel Deviation', status => $status, reason => $reason };
