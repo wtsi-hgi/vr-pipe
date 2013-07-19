@@ -42,6 +42,7 @@ my $TEST_MAX = 50;
 
 class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update {
     use VRPipe::Parser;
+    use MooseX::Singleton;
 
     has 'qc_results' => ( 
 	traits => ['Array'], 
@@ -638,10 +639,14 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
 	if (keys %{$opts}) {
 	    $self->auto_qc_bad_conf("unrecognized options in config file ($auto_qc_settings_file): ".join(",", keys %{$opts})."\n");
 	}
+	
+	# or if there were any results
+        if (!$self->qc_results_elements()) {
+	    $self->auto_qc_bad_conf("no test results for config file ($auto_qc_settings_file)");
+	}
 
         
         # now output the results
-        
         # Get overall autoqc result
         $status = 1;
         for my $stat ($self->qc_results_elements()) {
