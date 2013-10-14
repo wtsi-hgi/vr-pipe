@@ -43,6 +43,7 @@ my $TEST_MAX = 50;
 class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update {
     use VRPipe::Parser;
     use MooseX::Singleton;
+use Data::Dump qw(dump);
 
     has 'qc_results' => ( 
 	traits => ['Array'], 
@@ -54,6 +55,43 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
 	    qc_results_elements => 'elements',
 	}
 	);
+    has 'result_combinations' => (
+        traits => ['Array'],
+        is => 'rw',
+        isa => 'ArrayRef[HashRef]',
+        default => sub { [] },
+        handles => {
+            result_combinations_add => 'push',
+            result_combinations_elements => 'elements',
+        }
+        );
+
+    after qc_results_add (ClassName|Object $self: HashRef $result) {
+        return unless ($result->{status} == 2);
+        for my $result_comb ($self->result_combinations_elements) {
+            if (exists $result_comb->{tests}->{$result->{test}}) {
+                 $result_comb->{number}--;
+                 if ($result_comb->{number} == 0) {
+                     $self->qc_results_add({test => $result_comb->{name}, status => 0, reason => "Too many warnings"});
+                 }
+            }
+	}
+    }
+
+    method load_result_combinations(ClassName|Object $self: HashRef $opts ) {
+        if (exists $opts->{warnings_to_fail}) {
+            my $warnings_to_fail = $opts->{warnings_to_fail};
+            foreach my $wtf (@$warnings_to_fail) {
+                my $result_comb = {
+                    number => $wtf->{number},
+                    name => $wtf->{name},
+                };
+                for my $test (@{$wtf->{tests}}) {$result_comb->{tests}->{$test} = 1 }
+                $self->result_combinations_add($result_comb);
+            }
+            delete $opts->{warnings_to_fail};
+        }
+    }
     
     around options_definition {
         return {
@@ -240,7 +278,7 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update
 
 	# load qc settings from file -- parameter keys will be deleted from %$opts as each test is run so that we can check for conf syntax errors at the end
         my $opts = $self->load_config($auto_qc_settings_file);        
-
+        $self->load_result_combinations($opts);
         my ($test, $status, $reason);
         
 	
