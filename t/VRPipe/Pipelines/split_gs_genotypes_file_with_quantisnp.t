@@ -6,7 +6,7 @@ use File::Copy;
 use Data::Dumper;
 
 BEGIN {
-    use Test::Most tests => 15;
+    use Test::Most tests => 11;
     use VRPipeTest (
         required_env => [qw(VRPIPE_TEST_PIPELINES VRPIPE_VRTRACK_TESTDB)],
         required_exe => [qw(iget iquest)]
@@ -93,7 +93,7 @@ foreach my $lane (@lanes) {
 
 my @genotype_files;
 my $element_id = 0;
-foreach my $sample (qw(qc1hip5529683)) {
+foreach my $sample (qw(FS18.A)) {
     $element_id++;
     my @output_subdirs = output_subdirs($element_id);
     push(@genotype_files, file(@output_subdirs, '2_split_genome_studio_genotype_files', $sample . '.genotyping.fcr.txt'));
@@ -106,54 +106,49 @@ ok handle_pipeline(@genotype_files), 'bam import from irods and split genome stu
 my $meta = VRPipe::File->get(path => $genotype_files[0])->metadata;
 is_deeply $meta,
   {
-    'analysis_uuid' => '12d6fd7e-bfb8-4383-aee6-aa62c8f8fdab',
-    'bases'         => '0',
-    'withdrawn'     => '0',
     'population'    => 'Population',
+    'withdrawn'     => '0',
+    'bases'         => '0',
+    'analysis_uuid' => '12d6fd7e-bfb8-4383-aee6-aa62c8f8fdab',
     'paired'        => '0',
+    'library_tag'   => 'R01C01',
     'reads'         => '0',
     'project'       => 'Wellcome Trust Strategic Award application – HIPS',
     'library'       => '283163_A01_qc1hip5529683',
     'lane_id'       => '58',
     'individual'    => '6d3d2acf-29a5-41a2-8992-1414706a527d',
-    'platform'      => 'SLX',
+    'sample'        => 'FS18.A',
     'center_name'   => 'SC',
-    'sample'        => 'qc1hip5529683',
-    'expected_md5'  => 'd7e10a49be4e8b1e42fe71bc68e93856',
+    'platform'      => 'SLX',
     'study'         => '2624',
-    'control'       => 'Stem cell',
+    'expected_md5'  => 'd7e10a49be4e8b1e42fe71bc68e93856',
     'lane'          => '9300870057_R01C01',
+    'control'       => 'Stem cell',
     'species'       => 'Homo sapiens',
     'insert_size'   => '0',
     'storage_path'  => '/lustre/scratch105/vrpipe/refs/hipsci/resources/genotyping/12d6fd7e-bfb8-4383-aee6-aa62c8f8fdab_coreex_hips_20130531.fcr.txt.gz'
   },
   'metadata correct for one of the genotype files';
 
-$output_dir = get_output_dir('quantisnp_analysis');
-VRPipe::PipelineSetup->create(
-    name       => 'quantisnp_calling',
-    datasource => VRPipe::DataSource->create(
-        type   => 'vrpipe',
-        method => 'all',
-        source => 'gtc import and qc[2]',
-    
-    ),
-    output_root => $output_dir,
-    pipeline    => VRPipe::Pipeline->create(name => 'quantisnp'), #whatever name of pipeline is.....
-);
-
 #Run quantisnp pipeline using the output genotype files from the import:
-$output_dir = get_output_dir('quantisnp_analysis');
+$output_dir = get_output_dir('quantisnp_cnv_calling');
 
 #check pipeline has correct steps
-ok my $quan_pipeline = VRPipe::Pipeline->create(name => 'quantisnp'), 'able to get the quantisnp pipeline';
+ok my $quan_pipeline = VRPipe::Pipeline->create(name => 'quantisnp_cnv_calling'), 'able to get the quantisnp_cnv_calling pipeline';
 my @sq_names;
 foreach my $stepmember ($quan_pipeline->step_members) {
     push(@sq_names, $stepmember->step->name);
 }
-is_deeply \@sq_names, [qw(quantisnp_reformat_gs_export quantisnp_detect_cnv)], 'the quantisnp pipeline has the correct steps';
+is_deeply \@sq_names, [qw(quantisnp_reformat_gs_export quantisnp_detect_cnv)], 'the quantisnp_cnv_calling pipeline has the correct steps';
 
-my $quan_ps = VRPipe::PipelineSetup->create(
+my $reformat_script      = 'convert_fcr_to_quanti-per_sample.pl';
+my $manifest_file        = '/lustre/scratch105/vrpipe/refs/human/ncbi37/resources_hipsci/genotyping/QuantiSNP/HumanCoreExome-12v1-0_A.csv';
+my $run_quantisnp_script = '/lustre/scratch105/vrpipe/refs/human/ncbi37/resources_hipsci/genotyping/QuantiSNP/run_quantisnp2.sh';
+my $v79_dir              = '/lustre/scratch105/vrpipe/refs/human/ncbi37/resources_hipsci/genotyping/QuantiSNP/QSNP_dirs/v79';
+my $levels_file          = '/lustre/scratch105/vrpipe/refs/human/ncbi37/resources_hipsci/genotyping/QuantiSNP/QSNP_dirs/config/levels.dat';
+my $params_file          = '/lustre/scratch105/vrpipe/refs/human/ncbi37/resources_hipsci/genotyping/QuantiSNP/QSNP_dirs/config/params.dat';
+
+VRPipe::PipelineSetup->create(
     name       => 'quantisnp_calling',
     pipeline   => $quan_pipeline,
     datasource => VRPipe::DataSource->create(
@@ -162,103 +157,52 @@ my $quan_ps = VRPipe::PipelineSetup->create(
         source => 'gtc import and qc[2]',
     ),
     output_root => $output_dir,
+    options     => {
+        reformat_script      => $reformat_script,
+        manifest_file        => $manifest_file,
+        run_quantisnp_script => $run_quantisnp_script,
+        v79_dir              => $v79_dir,
+        levels_file          => $levels_file,
+        params_file          => $params_file,
+    },
 );
 
 #Get array of output files and check outputs as the pipeline is run
 my @quantisnp_files;
-foreach my $sample (qw(qc1hip5529683)) {
+foreach my $sample (qw(FS18.A)) {
     $element_id++;
     my @output_subdirs = output_subdirs($element_id, 2);
     push(@quantisnp_files, file(@output_subdirs, '2_quantisnp_detect_cnv', $sample . '.cnv'));
 }
-ok handle_pipeline(@quantisnp_files), 'quantisnp pipeline ran ok and produced the expected output files';
+ok handle_pipeline(@quantisnp_files), 'quantisnp_cnv_calling pipeline ran ok and produced the expected output files';
 
 #check genotype file metadata
 my $quan_meta = VRPipe::File->get(path => $quantisnp_files[0])->metadata;
 is_deeply $quan_meta,
   {
-    'analysis_uuid' => '12d6fd7e-bfb8-4383-aee6-aa62c8f8fdab',
-    'bases'         => '0',
-    'withdrawn'     => '0',
-    'population'    => 'Population',
-    'paired'        => '0',
-    'reads'         => '0',
-    'project'       => 'Wellcome Trust Strategic Award application – HIPS',
-    'library'       => '283163_A01_qc1hip5529683',
-    'lane_id'       => '58',
-    'individual'    => '6d3d2acf-29a5-41a2-8992-1414706a527d',
-    'platform'      => 'SLX',
-    'center_name'   => 'SC',
-    'sample'        => 'qc1hip5529683',
-    'expected_md5'  => 'd7e10a49be4e8b1e42fe71bc68e93856',
-    'study'         => '2624',
-    'control'       => 'Stem cell',
-    'lane'          => '9300870057_R01C01',
-    'species'       => 'Homo sapiens',
-    'insert_size'   => '0',
-    'storage_path'  => '/lustre/scratch105/vrpipe/refs/hipsci/resources/genotyping/12d6fd7e-bfb8-4383-aee6-aa62c8f8fdab_coreex_hips_20130531.fcr.txt.gz'
+    'population'        => 'Population',
+    'withdrawn'         => '0',
+    'bases'             => '0',
+    'analysis_uuid'     => '12d6fd7e-bfb8-4383-aee6-aa62c8f8fdab',
+    'paired'            => '0',
+    'library_tag'       => 'R01C01',
+    'reads'             => '0',
+    'project'           => 'Wellcome Trust Strategic Award application – HIPS',
+    'library'           => '283163_A01_qc1hip5529683',
+    'lane_id'           => '58',
+    'individual'        => '6d3d2acf-29a5-41a2-8992-1414706a527d',
+    'sample'            => 'FS18.A',
+    'center_name'       => 'SC',
+    'platform'          => 'SLX',
+    'study'             => '2624',
+    'expected_md5'      => 'd7e10a49be4e8b1e42fe71bc68e93856',
+    'lane'              => '9300870057_R01C01',
+    'control'           => 'Stem cell',
+    'species'           => 'Homo sapiens',
+    'insert_size'       => '0',
+    'cnv_analysis_type' => 'quantisnp',
+    'storage_path'      => '/lustre/scratch105/vrpipe/refs/hipsci/resources/genotyping/12d6fd7e-bfb8-4383-aee6-aa62c8f8fdab_coreex_hips_20130531.fcr.txt.gz'
   },
   'metadata correct for one of the quantisnp files';
-
-#Run quantisnp pipeline using the output genotype files from the import:
-$output_dir = get_output_dir('reformat_quantisnp_bed');
-
-#check pipeline has correct steps
-ok my $bed_pipeline = VRPipe::Pipeline->create(name => 'hipsci_cnv_control_removal'), 'able to get the hipsci_cnv_control_removal pipeline';
-my @sb_names;
-foreach my $stepmember ($bed_pipeline->step_members) {
-    push(@sb_names, $stepmember->step->name);
-}
-is_deeply \@sb_names, [qw(reformat_cnv_output_to_bed)], 'the hipsci_cnv_control_removal pipeline has the correct steps';
-
-my $quan_bed = VRPipe::PipelineSetup->create(
-    name       => 'quantisnp_reformat_bed',
-    pipeline   => $bed_pipeline,
-    datasource => VRPipe::DataSource->create(
-        type   => 'vrpipe',
-        method => 'all',
-        source => 'quantisnp_calling[2]',
-    ),
-    output_root => $output_dir,
-    options     => {
-        cnv_analysis_type => 'quantisnp',
-    }
-);
-
-#Get array of output files and check outputs as the pipeline is run
-my @quanbed_files;
-foreach my $sample (qw(qc1hip5529683)) {
-    $element_id++;
-    my @output_subdirs = output_subdirs($element_id, 3);
-    push(@quanbed_files, file(@output_subdirs, '1_reformat_cnv_output_to_bed', '6d3d2acf-29a5-41a2-8992-1414706a527d_' . $sample . '_quantisnp.bed'));
-}
-ok handle_pipeline(@quanbed_files), 'hipsci_cnv_control_removal pipeline ran ok and produced the expected output files';
-
-#check cnv file metadata
-my $reformat_meta = VRPipe::File->get(path => $quanbed_files[0])->metadata;
-is_deeply $reformat_meta,
-  {
-    'analysis_uuid' => '12d6fd7e-bfb8-4383-aee6-aa62c8f8fdab',
-    'bases'         => '0',
-    'withdrawn'     => '0',
-    'population'    => 'Population',
-    'paired'        => '0',
-    'reads'         => '0',
-    'project'       => 'Wellcome Trust Strategic Award application – HIPS',
-    'library'       => '283163_A01_qc1hip5529683',
-    'lane_id'       => '58',
-    'individual'    => '6d3d2acf-29a5-41a2-8992-1414706a527d',
-    'platform'      => 'SLX',
-    'center_name'   => 'SC',
-    'sample'        => 'qc1hip5529683',
-    'expected_md5'  => 'd7e10a49be4e8b1e42fe71bc68e93856',
-    'study'         => '2624',
-    'control'       => 'Stem cell',
-    'lane'          => '9300870057_R01C01',
-    'species'       => 'Homo sapiens',
-    'insert_size'   => '0',
-    'storage_path'  => '/lustre/scratch105/vrpipe/refs/hipsci/resources/genotyping/12d6fd7e-bfb8-4383-aee6-aa62c8f8fdab_coreex_hips_20130531.fcr.txt.gz'
-  },
-  'metadata correct for one of the reformatted quantisnp bed files';
 
 finish;

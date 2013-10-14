@@ -13,7 +13,7 @@ BEGIN {
     use TestPipelines;
     
     use_ok('VRPipe::Persistent::Schema');
-    use_ok('VRPipe::Interface::BackEnd');
+    use_ok('VRPipe::Persistent::InMemory');
 }
 
 my %times;
@@ -82,7 +82,7 @@ elapsed($l, __LINE__);
 
 # later we need a datasource row in the db to make the dataelements, so we just
 # create a list one and then withdraw its single element
-my $ds = VRPipe::DataSource->create(type => 'list', method => 'all', source => file(qw(t data datasource.onelist))->absolute);
+my $ds = VRPipe::DataSource->create(type => 'list', method => 'all', source => file(qw(t data datasource.onelist))->absolute->stringify);
 $ds->elements;
 my @elements = VRPipe::DataElement->search({});
 $elements[0]->withdrawn(1);
@@ -129,13 +129,12 @@ $steps[1] = VRPipe::Step->create(
     outputs_definition => { step2_output => VRPipe::StepIODefinition->create(type => 'txt', description => 'step2_output file') },
     post_process_sub   => sub            { return 1 }
 );
-VRPipe::StepAdaptor->create(pipeline => $pipeline, to_step => 2, adaptor_hash => { from_datasource => { data_element => 0 } });
-VRPipe::StepAdaptor->create(pipeline => $pipeline, to_step => 2, adaptor_hash => { from_step1      => { step1_output => 1 } });
+VRPipe::StepAdaptor->create(pipeline => $pipeline, to_step => 2, adaptor_hash => { from_datasource => { data_element => 0 }, from_step1 => { step1_output => 1 } });
 foreach my $step (@steps) {
     $pipeline->add_step($step);
 }
 my $output_root = get_output_dir('profiling_output_dir');
-my $ref         = file($output_root, 'ref.fa');
+my $ref         = file($output_root, 'ref.fa')->stringify;
 my $setup       = VRPipe::PipelineSetup->create(name => 'ps1', datasource => $ds, output_root => $output_root, pipeline => $pipeline, active => 0, options => { reference_fasta => $ref }, controlling_farm => 'testing_farm');
 
 # dataelement (and their associated files and metadata) creation tests
@@ -211,11 +210,8 @@ is_deeply \@element_ids, [2 .. 51], 'created correct dataelements';
 
 # now test the speed of triggering all these dataelements through a 2 step
 # pipeline, the first of which is a block_and_skip
-my $backend = VRPipe::Interface::BackEnd->new(deployment => 'testing', farm => 'testing_farm');
-$backend->start_redis_server;
-my $redis = $backend->redis;
 $l = start_clock(__LINE__);
-$setup->trigger(first_step_only => 1, prepare_elements => 0, redis => $redis);
+$setup->trigger(first_step_only => 1, prepare_elements => 0);
 elapsed($l, __LINE__);
 
 my @jobs = VRPipe::Job->search({ id => { '>' => $job_offset } });
@@ -227,7 +223,7 @@ sub pretend_completion {
     my ($jobs, $subs) = @_;
     foreach my $job (@$jobs) {
         $job->exit_code(0);
-        foreach my $col (qw(start_time heartbeat end_time)) {
+        foreach my $col (qw(start_time end_time)) {
             $job->$col(DateTime->now);
         }
         $job->update;
@@ -248,7 +244,7 @@ unless ($setup->currently_complete) {
             foreach my $des (@$dess) {
                 my $de = $des->dataelement;
                 my $j  = start_clock(__LINE__);
-                $setup->trigger(dataelement => $de, redis => $redis);
+                $setup->trigger(dataelement => $de);
                 elapsed($j, __LINE__);
             }
         }
@@ -335,7 +331,7 @@ is_deeply [scalar(keys %element_ids), exists $element_ids{75}], [70, 1], 'update
 # now retest the trigger, especially so we can test the speed of skipping things
 # that have already been done
 $l = start_clock(__LINE__);
-$setup->trigger(first_step_only => 1, prepare_elements => 0, redis => $redis);
+$setup->trigger(first_step_only => 1, prepare_elements => 0);
 elapsed($l, __LINE__);
 
 $l = start_clock(__LINE__);
@@ -346,7 +342,7 @@ unless ($setup->currently_complete) {
             foreach my $des (@$dess) {
                 my $de = $des->dataelement;
                 my $j  = start_clock(__LINE__);
-                $setup->trigger(dataelement => $de, redis => $redis);
+                $setup->trigger(dataelement => $de);
                 elapsed($j, __LINE__);
             }
         }
@@ -366,6 +362,7 @@ $l = start_clock(__LINE__);
 my $sub_pager = VRPipe::Submission->search_paged({ '_done' => 0, -or => [-and => ['_failed' => 1, retries => { '<' => 3 }], '_failed' => 0], scheduler => $sched_id, 'pipelinesetup.controlling_farm' => 'testing_farm', 'pipelinesetup.active' => 0, 'dataelement.withdrawn' => 0 }, { join => { stepstate => ['pipelinesetup', 'dataelement'] }, prefetch => ['requirements', 'job', { stepstate => { stepmember => 'step' } }] });
 
 my $queued = 0;
+my $im     = VRPipe::Persistent::InMemory->new();
 while (my $subs = $sub_pager->next(no_resetting => 1)) {
     foreach my $sub (@$subs) {
         my $sub_id = $sub->id;
@@ -380,7 +377,7 @@ while (my $subs = $sub_pager->next(no_resetting => 1)) {
         
         # queue this one in redis
         my $req_id = $sub->requirements->id;
-        $redis->sadd($req_id, $sub_id);
+        $im->enqueue($req_id, $sub_id);
         $queued++;
     }
 }
@@ -443,31 +440,6 @@ sub report {
     }
 }
 
-# MySQL, VRPipe v0.154:
-# Most time consuming sections:
-#   240..254: 167.91 seconds [triggering the second step]
-#   247..249: 167.88 seconds (3.36 avg over 50 loops) [trigger calls]
-#   337..351: 99.99 seconds [triggering the second step after updating elements]
-#   344..346: 99.7499999999999 seconds (1.05 avg over 95 loops) [trigger calls]
-#   333..335: 84.32 seconds [first step trigger after updating]
-#   43..54: 17.43 seconds [initial file creation with added metadata]
-#   56..65: 15.19 seconds [getting files and adding metadata]
-#   29..33: 14.93 seconds [initial job creation]
-#   36..40: 10.68 seconds [getting back the jobs by cmd]
-#   214..216: 6.33 seconds [the initial first step trigger]
-#   142..180: 5.61 seconds [initial creation of files for the dataelements]
-#   264..302: 3.71 seconds [new files for the extra dataelements]
-#   67..74: 3.38 seconds [checking file metadata]
-#   77..81: 3.38 seconds [getting files by path]
-#   314..316: 1.38 seconds [update bulk creation of dataelements]
-#   192..194: 1.11 seconds [initial bulk creation of dataelements]
-#   259..261: 0.44 seconds [completing subs and jobs]
-#   317..326: 0.13 seconds [update bulk creation of dataelementstates]
-#   362..384: 0.08 seconds [choosing submissions to queue]
-#   195..204: 0.03 seconds [initial bulk creation of dataelementstates]
-#   189..191: 0 seconds [initial withdrawal of all dataelements]
-#   311..313: 0 seconds [update withdrawal of all dataelements]
-
 # MySQL, VRPipe v0.155 (introduction of keyvallists on DataElement and File):
 # Most time consuming sections:
 #   243..257: 167.70 seconds
@@ -492,3 +464,54 @@ sub report {
 #   197..207: 0.04 seconds
 #   314..316: 0.00 seconds
 #   191..193: 0.00 seconds
+
+# MySQL 5.5, VRPipe v0.164 (fixed adaptor_hash definition to avoid transaction
+# failures):
+# Most time consuming sections:
+#   56..65: 28.28 seconds
+#   29..33: 16.48 seconds
+#   43..54: 15.58 seconds
+#   36..40: 13.45 seconds
+#   242..256: 12.56 seconds
+#   249..251: 12.50 seconds (0.2501 avg over 50 loops)
+#   336..338: 10.80 seconds
+#   216..218: 9.84 seconds
+#   340..354: 7.74 seconds
+#   347..349: 7.66 seconds (0.0806 avg over 95 loops)
+#   67..74: 6.67 seconds
+#   143..181: 6.66 seconds
+#   266..304: 4.94 seconds
+#   77..81: 3.64 seconds
+#   316..318: 1.87 seconds
+#   193..195: 1.64 seconds
+#   261..263: 0.28 seconds
+#   364..386: 0.08 seconds
+#   319..329: 0.04 seconds
+#   196..206: 0.03 seconds
+#   313..315: 0.00 seconds
+#   190..192: 0.00 seconds
+
+# MySQL 5.5, VRPipe v0.168 (after greater redis usage and connection fix)
+# Most time consuming sections:
+#   56..65: 31.40 seconds
+#   239..253: 20.21 seconds
+#   246..248: 20.16 seconds (0.4031 avg over 50 loops)
+#   43..54: 19.33 seconds
+#   333..335: 13.73 seconds
+#   29..33: 12.70 seconds
+#   36..40: 11.68 seconds
+#   337..351: 11.43 seconds
+#   344..346: 11.35 seconds (0.1195 avg over 95 loops)
+#   213..215: 10.61 seconds
+#   143..181: 7.05 seconds
+#   67..74: 6.64 seconds
+#   263..301: 5.07 seconds
+#   77..81: 3.53 seconds
+#   313..315: 1.85 seconds
+#   193..195: 1.80 seconds
+#   258..260: 0.24 seconds
+#   361..384: 0.09 seconds
+#   316..326: 0.04 seconds
+#   196..206: 0.03 seconds
+#   310..312: 0.00 seconds
+#   190..192: 0.00 seconds

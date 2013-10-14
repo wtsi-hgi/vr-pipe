@@ -1,3 +1,59 @@
+# version 0.168
+(you must first upgrade to 0.166 or later, see notes below)
+There is a change to how some information is stored in the database in this
+version, so please follow these upgrade instructions carefully:
+1) Stop the VRPipe server ('vrpipe-server stop'), ensure that it left no
+   processes behind (check with 'ps aux'), kill off any VRPipe-related jobs
+   and confirm nothing is accessing your production database (eg. log into
+   MySQL and do 'show processlist;').
+2) Install this latest software in your usual way
+3) Run the normal automated db_upgrade script:
+   $ vrpipe-db_upgrade
+4) Run this Perl one-liner; it could take anywhere from seconds to hours to run
+   depending on this size of your database:
+   $ perl -Imodules -MVRPipe -Mstrict -we 'my $pager = VRPipe::FileList->search_paged({}); while (my $fls = $pager->next) { foreach my $fl (@$fls) { my $str = join(",", sort { $a <=> $b } VRPipe::FileListMember->get_column_values("file", { filelist => $fl->id })); my $dmd5 = Digest::MD5->new(); $dmd5->add($str); $fl->lookup($dmd5->hexdigest); $fl->update; } }'
+5) Now you can start using VRPipe again as normal.
+
+# version 0.166
+(you must first upgrade to 0.165, see notes below)
+Prior versions had a bug where vrpipe-handler could get stuck running for ever
+even after completing their work, filling up the log with endless error
+messages. Before upgrading, stop the server and kill all existing handler jobs
+still running in your scheduler and delete your log file, which may have grown
+to massive size.
+
+# version 0.165
+(you must first upgrade to 0.164, see notes below)
+The database schema has changed, so run vrpipe-db_upgrade.
+
+# version 0.164
+(you must first upgrade to 0.163, see notes below)
+The database schema has changed, so run vrpipe-db_upgrade.
+
+Significant changes were made to the API used in the core of VRPipe, but these
+are unlikely to affect you:
+lock_row() in Persistent, use of transactions for locking and Living has been
+removed in place of InMemory->lock related methods.
+Job no longer has a heartbeat, so you can't confirm a job is currently running
+just by looking at the time of the last heartbeat in the MySQL database. Instead
+you can run a perl one-liner and see if $job->locked().
+
+# version 0.163
+(you must first upgrade to 0.159, see notes below)
+The database schema has changed, so run vrpipe-db_upgrade.
+
+Note that the vrpipe datasource filter option now uses the comma symbol to
+separate multiple filters, which means that your filter keys and regexes must
+not contain hashes or commas. If you have existing setups that had commas in
+their filters, those setups will break. You may have to manually fix them in the
+database before using 0.163.
+
+If you use the sge_ec2 scheduler, VRPipe's automated SGE configuration has
+changed so you will need to delete your .sge_confs directories (eg.
+`rm -fr /shared/software/VRPipe/*/.sge_confs`) and then start up a new SGE
+master instance. There are also new SiteConfig questions to answer, so rerun
+`perl Build.PL` and answer 'y' to go through setup again.
+
 # version 0.159
 You must upgrade to 0.158 first, following the upgrade instructions below for
 that version. Note that the instructions reference some scripts that have been
