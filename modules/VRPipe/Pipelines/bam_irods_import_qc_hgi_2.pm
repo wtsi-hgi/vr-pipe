@@ -1,7 +1,7 @@
 
 =head1 NAME
 
-VRPipe::Pipelines::bam_irods_import_qc_hgi - a pipeline
+VRPipe::Pipelines::bam_irods_import_qc_hgi_2 - a pipeline
 
 =head1 DESCRIPTION
 
@@ -33,9 +33,9 @@ this program. If not, see L<http://www.gnu.org/licenses/>.
 
 use VRPipe::Base;
 
-class VRPipe::Pipelines::bam_irods_import_qc_hgi with VRPipe::PipelineRole {
+class VRPipe::Pipelines::bam_irods_import_qc_hgi_2 with VRPipe::PipelineRole {
     method name {
-        return 'bam_irods_import_qc_hgi';
+        return 'bam_irods_import_qc_hgi_2';
     }
     
     method description {
@@ -49,9 +49,8 @@ class VRPipe::Pipelines::bam_irods_import_qc_hgi with VRPipe::PipelineRole {
             'bamcheck',                    #3
             'plot_bamcheck',               #4
             'vrtrack_update_mapstats',     #5
-            'bamcheck_detect_indel',       #6
-            'bamcheck_qual_dropoff',       #7
-            'vrtrack_auto_qc_hgi_2',       #8
+            'bamcheck_augment_summary',    #6
+            'vrtrack_auto_qc_hgi_2',       #7
         );
     }
     
@@ -65,8 +64,7 @@ class VRPipe::Pipelines::bam_irods_import_qc_hgi with VRPipe::PipelineRole {
             { from_step => 4, to_step => 5, from_key => 'bamcheck_plots', to_key => 'bamcheck_plots' },
             { from_step => 3, to_step => 6, from_key => 'bamcheck_files', to_key => 'bamcheck_files' },
             { from_step => 6, to_step => 7, from_key => 'bamcheck_files', to_key => 'bamcheck_files' },
-            { from_step => 7, to_step => 8, from_key => 'bamcheck_files', to_key => 'bamcheck_files' },
-            { from_step => 1, to_step => 8, from_key => 'local_files', to_key   => 'bam_files' },
+            { from_step => 1, to_step => 7, from_key => 'local_files', to_key   => 'bam_files' },
         );
     }
 }

@@ -1,17 +1,18 @@
 
 =head1 NAME
 
-VRPipe::Steps::bamcheck_qual_dropoff - a step
+VRPipe::Steps::bamcheck_augment_summary - a step
 
 =head1 DESCRIPTION
 
 =head1 AUTHOR
 
 Martin Pollard <mp15@sanger.co.uk>
+Joshua Randall <jcrandall@alum.mit.edu>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2012 Genome Research Limited.
+Copyright (c) 2012, 2013 Genome Research Limited.
 
 This file is part of VRPipe.
 
@@ -31,11 +32,11 @@ this program. If not, see L<http://www.gnu.org/licenses/>.
 
 use VRPipe::Base;
 
-class VRPipe::Steps::bamcheck_qual_dropoff extends VRPipe::Steps::r_script {
+class VRPipe::Steps::bamcheck_augment_summary extends VRPipe::Steps::r_script {
     around options_definition {
         return {
             %{ $self->$orig },
-            'hgi_rscript_dropoff_path' => VRPipe::StepOption->create(description => 'full path to hgi R script for detecting quality dropoff in data'),
+            'hgi_rscript_augment_path' => VRPipe::StepOption->create(description => 'full path to hgi R script for augmenting bamcheck summary data'),
         };
     }
     
@@ -60,22 +61,21 @@ class VRPipe::Steps::bamcheck_qual_dropoff extends VRPipe::Steps::r_script {
             my $options = $self->options;
             $self->handle_standard_options($options);
             
-            my $hgi_rscript_path = $options->{'hgi_rscript_dropoff_path'};
+            my $hgi_rscript_path = $options->{'hgi_rscript_augment_path'};
             
             my $req = $self->new_requirements(memory => 2000, time => 1);
             
             # make a copy of our input file
             foreach my $bamcheck_file (@{ $self->inputs->{bamcheck_files} }) {
                 my $output_bamcheck = $self->output_file(output_key => 'bamcheck_files', basename => $bamcheck_file->basename, type => 'txt', metadata => $bamcheck_file->metadata);
-                $bamcheck_file->copy($output_bamcheck);
                 
-                my $bamcheck_path = $output_bamcheck->path;
-                $output_bamcheck->md5(undef);
+		my $bamcheck_in_path = $bamcheck_file->path;
+                my $bamcheck_out_path = $output_bamcheck->path;
 		$output_bamcheck->disconnect();
                 
-                my $cmd = $self->rscript_cmd_prefix . " $hgi_rscript_path bamcheck=\"$bamcheck_path\" outfile=\"$bamcheck_path\"";
+                my $cmd = $self->rscript_cmd_prefix . " $hgi_rscript_path \"$bamcheck_in_path\" \"$bamcheck_out_path\"";
                 
-                $self->dispatch([$cmd, $req, { output_files => [$bamcheck_file] }]);
+                $self->dispatch([$cmd, $req, { output_files => [$output_bamcheck] }]);
             }
         
         };
@@ -100,7 +100,7 @@ class VRPipe::Steps::bamcheck_qual_dropoff extends VRPipe::Steps::r_script {
     }
     
     method description {
-        return "Runs check on quality score dropoff";
+        return "Augments bamcheck data with additional summary numbers calculated from other section data";
     }
 }
 
