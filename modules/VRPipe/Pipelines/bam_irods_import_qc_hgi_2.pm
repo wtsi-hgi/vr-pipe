@@ -7,9 +7,10 @@ VRPipe::Pipelines::bam_irods_import_qc_hgi_2 - a pipeline
 
 *** more documentation to come
 
-=head1 AUTHOR
+=head1 AUTHORS
 
-Martin Pollard <mp15@sanger.ac.uk>.
+Martin Pollard <mp15@sanger.ac.uk>
+Joshua Randall <jcrandall@alum.mit.edu>
 
 =head1 COPYRIGHT AND LICENSE
 
@@ -50,7 +51,7 @@ class VRPipe::Pipelines::bam_irods_import_qc_hgi_2 with VRPipe::PipelineRole {
             'plot_bamcheck',               #4
             'vrtrack_update_mapstats',     #5
             'bamcheck_augment_summary',    #6
-            'vrtrack_auto_qc_hgi_2',       #7
+            'vrtrack_auto_qc_hgi_3',       #7
         );
     }
     

@@ -1,7 +1,7 @@
 
 =head1 NAME
 
-VRPipe::Steps::vrtrack_auto_qc_hgi_2 - a step
+VRPipe::Steps::vrtrack_auto_qc_hgi_3 - a step
 
 =head1 DESCRIPTION
 
@@ -40,7 +40,7 @@ use VRPipe::Base;
 my $REASON_MAX = 200;
 my $TEST_MAX = 50;
 
-class VRPipe::Steps::vrtrack_auto_qc_hgi_2 extends VRPipe::Steps::vrtrack_update {
+class VRPipe::Steps::vrtrack_auto_qc_hgi_3 extends VRPipe::Steps::vrtrack_update {
     use VRPipe::Parser;
     use MooseX::Singleton;
 use Data::Dump qw(dump);
@@ -139,7 +139,7 @@ use Data::Dump qw(dump);
             while (my ($lane, $files) = each %by_lane) {
                 $self->throw("There was not exactly 1 bam file and 1 bamcheck file per lane for lane $lane (@$files)") unless @$files == 2;
                 
-                my $cmd = "use VRPipe::Steps::vrtrack_auto_qc_hgi_2; VRPipe::Steps::vrtrack_auto_qc_hgi_2->auto_qc(db => q[$opts->{vrtrack_db}], bam => q[$files->[0]], bamcheck => q[$files->[1]], lane => q[$lane], auto_qc_settings_file => q[$opts->{auto_qc_settings_file}] );";
+                my $cmd = "use VRPipe::Steps::vrtrack_auto_qc_hgi_3; VRPipe::Steps::vrtrack_auto_qc_hgi_3->auto_qc(db => q[$opts->{vrtrack_db}], bam => q[$files->[0]], bamcheck => q[$files->[1]], lane => q[$lane], auto_qc_settings_file => q[$opts->{auto_qc_settings_file}] );";
                 $self->dispatch_vrpipecode($cmd, $req);
             }
         };
@@ -574,7 +574,7 @@ use Data::Dump qw(dump);
         # HGI #
         #######
 
-        # indel vs read cycle peak detection
+        # indel vs read cycle peak detection (added by bamcheckr::indel_peaks())
 	$self->test_minmax(
 	    test      => 'Fwd insertions vs read cycle pct above baseline',
 	    test_conf => 'auto_qc_indel_percentage_deviation',
@@ -658,19 +658,143 @@ use Data::Dump qw(dump);
 	delete $opts->{auto_qc_indel_percentage_deviation};
 
 
-        # quality vs read cycle contiguous quality dropoff
+        # quality vs read cycle (added by bamcheckr::quality_dropoff())
 	$self->test_minmax(
-	    test      => 'Quality dropoff',
-	    test_conf => 'auto_qc_qual_contig_cycle_dropoff',
+	    test      => 'Quality dropoff fwd contiguous high IQR',
+	    test_conf => 'auto_qc_qual_contig_cycle_high_iqr',
 	    opts      => $opts,
 	    minmax    => ['max'],
-	    value     => $bc->contiguous_cycle_dropoff_count(),
-	    above_max_reason_fmt => "Quality drops for more than %d contiguous read cycles (%d).",
-	    up_to_max_reason_fmt => "Quality does not drop for more than %d contiguous read cycles (%d).",
+	    value     => $bc->quality_dropoff_fwd_high_iqr_max_contiguous_read_cycles(),
+	    above_max_reason_fmt => "Fwd quality has more than %d contiguous read cycles with high IQR (%d).",
+	    up_to_max_reason_fmt => "Fwd quality does not have more than %d contiguous read cycles with high IQR (%d).",
 	    );
-	delete $opts->{auto_qc_qual_contig_cycle_dropoff};
+	$self->test_minmax(
+	    test      => 'Quality dropoff rev contiguous high IQR',
+	    test_conf => 'auto_qc_qual_contig_cycle_high_iqr',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->quality_dropoff_rev_high_iqr_max_contiguous_read_cycles(),
+	    above_max_reason_fmt => "Rev quality has more than %d contiguous read cycles with high IQR (%d).",
+	    up_to_max_reason_fmt => "Rev quality does not have more than %d contiguous read cycles with high IQR (%d).",
+	    );
+	delete $opts->{auto_qc_qual_contig_cycle_high_iqr};
 
+	$self->test_minmax(
+	    test      => 'Quality dropoff fwd contiguous decline cycle count',
+	    test_conf => 'auto_qc_qual_contig_cycle_dropoff_cycles',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->quality_dropoff_fwd_mean_runmed_decline_max_contiguous_read_cycles(),
+	    above_max_reason_fmt => "Fwd reads have more than %d contiguous read cycles with declining quality (%d).",
+	    up_to_max_reason_fmt => "Fwd reads do not have more than %d contiguous read cycles with declining quality (%d).",
+	    );
+	$self->test_minmax(
+	    test      => 'Quality dropoff rev contiguous decline cycle count',
+	    test_conf => 'auto_qc_qual_contig_cycle_dropoff_cycles',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->quality_dropoff_rev_mean_runmed_decline_max_contiguous_read_cycles(),
+	    above_max_reason_fmt => "Rev reads have more than %d contiguous read cycles with declining quality (%d).",
+	    up_to_max_reason_fmt => "Rev reads do not have more than %d contiguous read cycles with declining quality (%d).",
+	    );
+	delete $opts->{auto_qc_qual_contig_cycle_dropoff_cycles};
 
+	$self->test_minmax(
+	    test      => 'Quality dropoff fwd contiguous decline low value',
+	    test_conf => 'auto_qc_qual_contig_cycle_dropoff_lowval',
+	    opts      => $opts,
+	    minmax    => ['min'],
+	    value     => $bc->quality_dropoff_fwd_mean_runmed_decline_low_value(),
+	    above_max_reason_fmt => "Fwd reads have longest contiguous decline ending in quality less than %d (%d).",
+	    up_to_max_reason_fmt => "Fwd reads have longest contiguous decline ending in quality not less than %d (%d).",
+	    );
+	$self->test_minmax(
+	    test      => 'Quality dropoff rev contiguous decline low value',
+	    test_conf => 'auto_qc_qual_contig_cycle_dropoff_lowval',
+	    opts      => $opts,
+	    minmax    => ['min'],
+	    value     => $bc->quality_dropoff_rev_mean_runmed_decline_low_value(),
+	    above_max_reason_fmt => "Rev reads have longest contiguous decline ending in quality less than %d (%d).",
+	    up_to_max_reason_fmt => "Rev reads have longest contiguous decline ending in quality not less than %d (%d).",
+	    );
+	delete $opts->{auto_qc_qual_contig_cycle_dropoff_lowval};
+
+        # base content deviation (added by bamcheckr::base_content_deviation())
+	$self->test_minmax(
+	    test      => 'Base content total baseline deviation (A)',
+	    test_conf => 'auto_qc_base_content_total_baseline_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->A_percent_total_mean_baseline_deviation(),
+	    above_max_reason_fmt => "Base content A has more than %.2f%% deviation across read cycles (%.2f%%).",
+	    up_to_max_reason_fmt => "Base content A does not have more than %.2f%% deviation across read cycles (%.2f%%).",
+	    );
+	$self->test_minmax(
+	    test      => 'Base content total baseline deviation (C)',
+	    test_conf => 'auto_qc_base_content_total_baseline_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->C_percent_total_mean_baseline_deviation(),
+	    above_max_reason_fmt => "Base content C has more than %.2f%% deviation across read cycles (%.2f%%).",
+	    up_to_max_reason_fmt => "Base content C does not have more than %.2f%% deviation across read cycles (%.2f%%).",
+	    );
+	$self->test_minmax(
+	    test      => 'Base content total baseline deviation (G)',
+	    test_conf => 'auto_qc_base_content_total_baseline_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->G_percent_total_mean_baseline_deviation(),
+	    above_max_reason_fmt => "Base content G has more than %.2f%% deviation across read cycles (%.2f%%).",
+	    up_to_max_reason_fmt => "Base content G does not have more than %.2f%% deviation across read cycles (%.2f%%).",
+	    );
+	$self->test_minmax(
+	    test      => 'Base content total baseline deviation (T)',
+	    test_conf => 'auto_qc_base_content_total_baseline_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->T_percent_total_mean_baseline_deviation(),
+	    above_max_reason_fmt => "Base content T has more than %.2f%% deviation across read cycles (%.2f%%).",
+	    up_to_max_reason_fmt => "Base content T does not have more than %.2f%% deviation across read cycles (%.2f%%).",
+	    );
+	delete $opts->{auto_qc_base_content_total_baseline_deviation};
+
+	$self->test_minmax(
+	    test      => 'Base content max baseline deviation (A)',
+	    test_conf => 'auto_qc_base_content_max_baseline_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->A_percent_max_baseline_deviation(),
+	    above_max_reason_fmt => "Base content A has more than %.2f%% max deviation from baseline (%.2f%%).",
+	    up_to_max_reason_fmt => "Base content A has not more than %.2f%% max deviation from baseline (%.2f%%).",
+	    );
+	$self->test_minmax(
+	    test      => 'Base content max baseline deviation (C)',
+	    test_conf => 'auto_qc_base_content_max_baseline_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->C_percent_max_baseline_deviation(),
+	    above_max_reason_fmt => "Base content C has more than %.2f%% max deviation from baseline (%.2f%%).",
+	    up_to_max_reason_fmt => "Base content C has not more than %.2f%% max deviation from baseline (%.2f%%).",
+	    );
+	$self->test_minmax(
+	    test      => 'Base content max baseline deviation (G)',
+	    test_conf => 'auto_qc_base_content_max_baseline_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->G_percent_max_baseline_deviation(),
+	    above_max_reason_fmt => "Base content G has more than %.2f%% max deviation from baseline (%.2f%%).",
+	    up_to_max_reason_fmt => "Base content G has not more than %.2f%% max deviation from baseline (%.2f%%).",
+	    );
+	$self->test_minmax(
+	    test      => 'Base content max baseline deviation (T)',
+	    test_conf => 'auto_qc_base_content_max_baseline_deviation',
+	    opts      => $opts,
+	    minmax    => ['max'],
+	    value     => $bc->T_percent_max_baseline_deviation(),
+	    above_max_reason_fmt => "Base content T has more than %.2f%% max deviation from baseline (%.2f%%).",
+	    up_to_max_reason_fmt => "Base content T has not more than %.2f%% max deviation from baseline (%.2f%%).",
+	    );
+	delete $opts->{auto_qc_base_content_max_baseline_deviation};
 
 	# Finally, check if there are any keys left in opts
 	# if so, there was an unrecognized option in the config file
