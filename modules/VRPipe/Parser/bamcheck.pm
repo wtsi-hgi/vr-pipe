@@ -511,7 +511,7 @@ class VRPipe::Parser::bamcheck with VRPipe::ParserRole {
                 my $method      = $1;
                 my $value       = $2;
                 my $orig_method = $method;
-                $method =~ s/[\s-]+/_/g;
+                $method =~ s/[\s.-]+/_/g;
                 $method = 'first_fragments'    if $method eq '1st_fragments';
                 $method = 'bases_mapped_cigar' if $method eq 'bases_mapped_(cigar)';
                 $method = lc('_' . $method);
