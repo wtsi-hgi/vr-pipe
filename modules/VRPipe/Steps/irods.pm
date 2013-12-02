@@ -86,7 +86,7 @@ class VRPipe::Steps::irods with VRPipe::StepRole {
     }
     
     method max_simultaneous {
-        return 15;
+        return 40;
     }
     
     method get_file_by_basename (ClassName|Object $self: Str :$basename!, Str|File :$dest!, Str :$zone = 'seq', Str|File :$iget!, Str|File :$iquest!, Str|File :$ichksum!) {
@@ -143,9 +143,19 @@ class VRPipe::Steps::irods with VRPipe::StepRole {
         my $dest = $dest_file->path;
         $dest_file->disconnect;
 
-        # before we go fetch a file, check the md5 matches what we're expecting
+        # check we've not downloaded it already
         my $irodschksum = $self->get_file_md5(file => $source, ichksum => $ichksum);
         my $expected_md5 = $dest_file->metadata->{expected_md5} || $irodschksum;
+        if ( -e $dest ) {
+            my $already_got_it = $dest_file->verify_md5($dest, $expected_md5);
+            if ( $already_got_it ) {
+                $dest_file->update_stats_from_disc;
+                chmod 0664, $dest;
+                return;
+            }
+        }
+
+        # before we go fetch a file, check the md5 matches what we're expecting
         unless ($irodschksum eq $expected_md5) {
             $dest_file->unlink;
             $self->throw("expected md5 checksum in metadata ($expected_md5) did not match md5 of $source in IRODS ($irodschksum); aborted");
