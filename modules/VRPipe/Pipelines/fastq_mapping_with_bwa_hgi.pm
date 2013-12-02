@@ -54,6 +54,7 @@ class VRPipe::Pipelines::fastq_mapping_with_bwa_hgi with VRPipe::PipelineRole {
     method adaptor_definitions {
         (
             { from_step => 0, to_step => 2, to_key   => 'fastq_files' },
+            { from_step => 0, to_step => 3, to_key   => 'fastq_files' },
             { from_step => 2, to_step => 3, from_key => 'bwa_sai_files', to_key => 'sai_files' },
             { from_step => 3, to_step => 4, from_key => 'bwa_sam_files', to_key => 'sam_files' },
         );
