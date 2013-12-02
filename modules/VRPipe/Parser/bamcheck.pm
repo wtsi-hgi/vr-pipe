@@ -43,6 +43,7 @@ VRPipe::Parser::bamcheck - parse bamcheck files
     $val = $pars->inward_oriented_pairs();
     $val = $pars->outward_oriented_pairs();
     $val = $pars->pairs_with_other_orientation();
+    # + more that we don't feel like duplicating here
     
     # COV lines give the coverage:
     my $cov_hash = $pars->coverage(); # keys are coverage in bp, vals are counts
@@ -308,7 +309,7 @@ class VRPipe::Parser::bamcheck with VRPipe::ParserRole {
         writer => '_mean_coverage'
     );
 
-    # annots added by bamcheck_indels
+    # annots added by bamcheckr::indel_peaks
 
     has 'fwd_percent_insertions_above_baseline' => (
         is     => 'ro',
@@ -358,12 +359,264 @@ class VRPipe::Parser::bamcheck with VRPipe::ParserRole {
         writer => '_rev_percent_deletions_below_baseline',
     );
 
-    # qual dropoff
+    # added by bamcheckr::quality_dropoff
+    has 'quality_dropoff_fwd_high_iqr_start_read_cycle' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_fwd_high_iqr_start_read_cycle',
+    );
 
-    has 'contiguous_cycle_dropoff_count' => (
-        is     => 'ro',
-        isa    => 'Int',
-        writer => '_contiguous_cycle_dropoff_count',
+    has 'quality_dropoff_fwd_high_iqr_end_read_cycle' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_fwd_high_iqr_end_read_cycle',
+    );
+
+    has 'quality_dropoff_fwd_high_iqr_max_contiguous_read_cycles' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_fwd_high_iqr_max_contiguous_read_cycles',
+    );
+
+    has 'quality_dropoff_fwd_mean_runmed_decline_start_read_cycle' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_fwd_mean_runmed_decline_start_read_cycle',
+    );
+
+    has 'quality_dropoff_fwd_mean_runmed_decline_end_read_cycle' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_fwd_mean_runmed_decline_end_read_cycle',
+    );
+
+    has 'quality_dropoff_fwd_mean_runmed_decline_max_contiguous_read_cycles' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_fwd_mean_runmed_decline_max_contiguous_read_cycles',
+    );
+
+    has 'quality_dropoff_fwd_mean_runmed_decline_high_value' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_fwd_mean_runmed_decline_high_value',
+    );
+
+    has 'quality_dropoff_fwd_mean_runmed_decline_low_value' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_fwd_mean_runmed_decline_low_value',
+    );
+
+    has 'quality_dropoff_rev_high_iqr_start_read_cycle' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_rev_high_iqr_start_read_cycle',
+    );
+
+    has 'quality_dropoff_rev_high_iqr_end_read_cycle' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_rev_high_iqr_end_read_cycle',
+    );
+
+    has 'quality_dropoff_rev_high_iqr_max_contiguous_read_cycles' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_rev_high_iqr_max_contiguous_read_cycles',
+    );
+
+    has 'quality_dropoff_rev_mean_runmed_decline_start_read_cycle' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_rev_mean_runmed_decline_start_read_cycle',
+    );
+
+    has 'quality_dropoff_rev_mean_runmed_decline_end_read_cycle' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_rev_mean_runmed_decline_end_read_cycle',
+    );
+
+    has 'quality_dropoff_rev_mean_runmed_decline_max_contiguous_read_cycles' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_rev_mean_runmed_decline_max_contiguous_read_cycles',
+    );
+
+    has 'quality_dropoff_rev_mean_runmed_decline_high_value' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_rev_mean_runmed_decline_high_value',
+    );
+
+    has 'quality_dropoff_rev_mean_runmed_decline_low_value' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_rev_mean_runmed_decline_low_value',
+    );
+
+    has 'quality_dropoff_high_iqr_threshold' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_high_iqr_threshold',
+    );
+
+    has 'quality_dropoff_runmed_k' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_runmed_k',
+    );
+
+    has 'quality_dropoff_ignore_edge_cycles' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_quality_dropoff_ignore_edge_cycles',
+    );
+
+    # added by bamcheckr::base_content_deviation
+    has 'A_percent_mean_above_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_A_percent_mean_above_baseline',
+    );
+
+    has 'C_percent_mean_above_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_C_percent_mean_above_baseline',
+    );
+
+    has 'G_percent_mean_above_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_G_percent_mean_above_baseline',
+    );
+
+    has 'T_percent_mean_above_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_T_percent_mean_above_baseline',
+    );
+
+    has 'A_percent_mean_below_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_A_percent_mean_below_baseline',
+    );
+
+    has 'C_percent_mean_below_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_C_percent_mean_below_baseline',
+    );
+
+    has 'G_percent_mean_below_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_G_percent_mean_below_baseline',
+    );
+
+    has 'T_percent_mean_below_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_T_percent_mean_below_baseline',
+    );
+
+    has 'A_percent_max_above_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_A_percent_max_above_baseline',
+    );
+
+    has 'C_percent_max_above_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_C_percent_max_above_baseline',
+    );
+
+    has 'G_percent_max_above_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_G_percent_max_above_baseline',
+    );
+
+    has 'T_percent_max_above_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_T_percent_max_above_baseline',
+    );
+
+    has 'A_percent_max_below_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_A_percent_max_below_baseline',
+    );
+
+    has 'C_percent_max_below_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_C_percent_max_below_baseline',
+    );
+
+    has 'G_percent_max_below_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_G_percent_max_below_baseline',
+    );
+
+    has 'T_percent_max_below_baseline' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_T_percent_max_below_baseline',
+    );
+
+    has 'A_percent_max_baseline_deviation' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_A_percent_max_baseline_deviation',
+    );
+
+    has 'C_percent_max_baseline_deviation' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_C_percent_max_baseline_deviation',
+    );
+
+    has 'G_percent_max_baseline_deviation' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_G_percent_max_baseline_deviation',
+    );
+
+    has 'T_percent_max_baseline_deviation' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_T_percent_max_baseline_deviation',
+    );
+
+    has 'A_percent_total_mean_baseline_deviation' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_A_percent_total_mean_baseline_deviation',
+    );
+
+    has 'C_percent_total_mean_baseline_deviation' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_C_percent_total_mean_baseline_deviation',
+    );
+
+    has 'G_percent_total_mean_baseline_deviation' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_G_percent_total_mean_baseline_deviation',
+    );
+
+    has 'T_percent_total_mean_baseline_deviation' => (
+	is     => 'ro',
+	isa    => 'Maybe[Num]',
+	writer => '_T_percent_total_mean_baseline_deviation',
     );
 
 
