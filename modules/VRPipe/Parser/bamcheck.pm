@@ -475,148 +475,148 @@ class VRPipe::Parser::bamcheck with VRPipe::ParserRole {
     );
 
     # added by bamcheckr::base_content_deviation
-    has 'A_percent_mean_above_baseline' => (
+    has 'a_percent_mean_above_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_A_percent_mean_above_baseline',
+	writer => '_a_percent_mean_above_baseline',
     );
 
-    has 'C_percent_mean_above_baseline' => (
+    has 'c_percent_mean_above_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_C_percent_mean_above_baseline',
+	writer => '_c_percent_mean_above_baseline',
     );
 
-    has 'G_percent_mean_above_baseline' => (
+    has 'g_percent_mean_above_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_G_percent_mean_above_baseline',
+	writer => '_g_percent_mean_above_baseline',
     );
 
-    has 'T_percent_mean_above_baseline' => (
+    has 't_percent_mean_above_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_T_percent_mean_above_baseline',
+	writer => '_t_percent_mean_above_baseline',
     );
 
-    has 'A_percent_mean_below_baseline' => (
+    has 'a_percent_mean_below_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_A_percent_mean_below_baseline',
+	writer => '_a_percent_mean_below_baseline',
     );
 
-    has 'C_percent_mean_below_baseline' => (
+    has 'c_percent_mean_below_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_C_percent_mean_below_baseline',
+	writer => '_c_percent_mean_below_baseline',
     );
 
-    has 'G_percent_mean_below_baseline' => (
+    has 'g_percent_mean_below_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_G_percent_mean_below_baseline',
+	writer => '_g_percent_mean_below_baseline',
     );
 
-    has 'T_percent_mean_below_baseline' => (
+    has 't_percent_mean_below_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_T_percent_mean_below_baseline',
+	writer => '_t_percent_mean_below_baseline',
     );
 
-    has 'A_percent_max_above_baseline' => (
+    has 'a_percent_max_above_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_A_percent_max_above_baseline',
+	writer => '_a_percent_max_above_baseline',
     );
 
-    has 'C_percent_max_above_baseline' => (
+    has 'c_percent_max_above_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_C_percent_max_above_baseline',
+	writer => '_c_percent_max_above_baseline',
     );
 
-    has 'G_percent_max_above_baseline' => (
+    has 'g_percent_max_above_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_G_percent_max_above_baseline',
+	writer => '_g_percent_max_above_baseline',
     );
 
-    has 'T_percent_max_above_baseline' => (
+    has 't_percent_max_above_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_T_percent_max_above_baseline',
+	writer => '_t_percent_max_above_baseline',
     );
 
-    has 'A_percent_max_below_baseline' => (
+    has 'a_percent_max_below_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_A_percent_max_below_baseline',
+	writer => '_a_percent_max_below_baseline',
     );
 
-    has 'C_percent_max_below_baseline' => (
+    has 'c_percent_max_below_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_C_percent_max_below_baseline',
+	writer => '_c_percent_max_below_baseline',
     );
 
-    has 'G_percent_max_below_baseline' => (
+    has 'g_percent_max_below_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_G_percent_max_below_baseline',
+	writer => '_g_percent_max_below_baseline',
     );
 
-    has 'T_percent_max_below_baseline' => (
+    has 't_percent_max_below_baseline' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_T_percent_max_below_baseline',
+	writer => '_t_percent_max_below_baseline',
     );
 
-    has 'A_percent_max_baseline_deviation' => (
+    has 'a_percent_max_baseline_deviation' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_A_percent_max_baseline_deviation',
+	writer => '_a_percent_max_baseline_deviation',
     );
 
-    has 'C_percent_max_baseline_deviation' => (
+    has 'c_percent_max_baseline_deviation' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_C_percent_max_baseline_deviation',
+	writer => '_c_percent_max_baseline_deviation',
     );
 
-    has 'G_percent_max_baseline_deviation' => (
+    has 'g_percent_max_baseline_deviation' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_G_percent_max_baseline_deviation',
+	writer => '_g_percent_max_baseline_deviation',
     );
 
-    has 'T_percent_max_baseline_deviation' => (
+    has 't_percent_max_baseline_deviation' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_T_percent_max_baseline_deviation',
+	writer => '_t_percent_max_baseline_deviation',
     );
 
-    has 'A_percent_total_mean_baseline_deviation' => (
+    has 'a_percent_total_mean_baseline_deviation' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_A_percent_total_mean_baseline_deviation',
+	writer => '_a_percent_total_mean_baseline_deviation',
     );
 
-    has 'C_percent_total_mean_baseline_deviation' => (
+    has 'c_percent_total_mean_baseline_deviation' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_C_percent_total_mean_baseline_deviation',
+	writer => '_c_percent_total_mean_baseline_deviation',
     );
 
-    has 'G_percent_total_mean_baseline_deviation' => (
+    has 'g_percent_total_mean_baseline_deviation' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_G_percent_total_mean_baseline_deviation',
+	writer => '_g_percent_total_mean_baseline_deviation',
     );
 
-    has 'T_percent_total_mean_baseline_deviation' => (
+    has 't_percent_total_mean_baseline_deviation' => (
 	is     => 'ro',
 	isa    => 'Maybe[Num]',
-	writer => '_T_percent_total_mean_baseline_deviation',
+	writer => '_t_percent_total_mean_baseline_deviation',
     );
 
 
