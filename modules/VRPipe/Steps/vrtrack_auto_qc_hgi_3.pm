@@ -725,7 +725,7 @@ use Data::Dump qw(dump);
 	    test_conf => 'auto_qc_base_content_total_baseline_deviation',
 	    opts      => $opts,
 	    minmax    => ['max'],
-	    value     => $bc->A_percent_total_mean_baseline_deviation(),
+	    value     => $bc->a_percent_total_mean_baseline_deviation(),
 	    above_max_reason_fmt => "Base content A has more than %.2f%% deviation across read cycles (%.2f%%).",
 	    up_to_max_reason_fmt => "Base content A does not have more than %.2f%% deviation across read cycles (%.2f%%).",
 	    );
@@ -734,8 +734,8 @@ use Data::Dump qw(dump);
 	    test_conf => 'auto_qc_base_content_total_baseline_deviation',
 	    opts      => $opts,
 	    minmax    => ['max'],
-	    value     => $bc->C_percent_total_mean_baseline_deviation(),
-	    above_max_reason_fmt => "Base content C has more than %.2f%% deviation across read cycles (%.2f%%).",
+	    value     => $bc->c_percent_total_mean_baseline_deviation(),
+	    above_max_reason_fct => "Base content C has more than %.2f%% deviation across read cycles (%.2f%%).",
 	    up_to_max_reason_fmt => "Base content C does not have more than %.2f%% deviation across read cycles (%.2f%%).",
 	    );
 	$self->test_minmax(
@@ -743,7 +743,7 @@ use Data::Dump qw(dump);
 	    test_conf => 'auto_qc_base_content_total_baseline_deviation',
 	    opts      => $opts,
 	    minmax    => ['max'],
-	    value     => $bc->G_percent_total_mean_baseline_deviation(),
+	    value     => $bc->g_percent_total_mean_baseline_deviation(),
 	    above_max_reason_fmt => "Base content G has more than %.2f%% deviation across read cycles (%.2f%%).",
 	    up_to_max_reason_fmt => "Base content G does not have more than %.2f%% deviation across read cycles (%.2f%%).",
 	    );
@@ -752,7 +752,7 @@ use Data::Dump qw(dump);
 	    test_conf => 'auto_qc_base_content_total_baseline_deviation',
 	    opts      => $opts,
 	    minmax    => ['max'],
-	    value     => $bc->T_percent_total_mean_baseline_deviation(),
+	    value     => $bc->t_percent_total_mean_baseline_deviation(),
 	    above_max_reason_fmt => "Base content T has more than %.2f%% deviation across read cycles (%.2f%%).",
 	    up_to_max_reason_fmt => "Base content T does not have more than %.2f%% deviation across read cycles (%.2f%%).",
 	    );
@@ -763,7 +763,7 @@ use Data::Dump qw(dump);
 	    test_conf => 'auto_qc_base_content_max_baseline_deviation',
 	    opts      => $opts,
 	    minmax    => ['max'],
-	    value     => $bc->A_percent_max_baseline_deviation(),
+	    value     => $bc->a_percent_max_baseline_deviation(),
 	    above_max_reason_fmt => "Base content A has more than %.2f%% max deviation from baseline (%.2f%%).",
 	    up_to_max_reason_fmt => "Base content A has not more than %.2f%% max deviation from baseline (%.2f%%).",
 	    );
@@ -772,7 +772,7 @@ use Data::Dump qw(dump);
 	    test_conf => 'auto_qc_base_content_max_baseline_deviation',
 	    opts      => $opts,
 	    minmax    => ['max'],
-	    value     => $bc->C_percent_max_baseline_deviation(),
+	    value     => $bc->c_percent_max_baseline_deviation(),
 	    above_max_reason_fmt => "Base content C has more than %.2f%% max deviation from baseline (%.2f%%).",
 	    up_to_max_reason_fmt => "Base content C has not more than %.2f%% max deviation from baseline (%.2f%%).",
 	    );
@@ -781,7 +781,7 @@ use Data::Dump qw(dump);
 	    test_conf => 'auto_qc_base_content_max_baseline_deviation',
 	    opts      => $opts,
 	    minmax    => ['max'],
-	    value     => $bc->G_percent_max_baseline_deviation(),
+	    value     => $bc->g_percent_max_baseline_deviation(),
 	    above_max_reason_fmt => "Base content G has more than %.2f%% max deviation from baseline (%.2f%%).",
 	    up_to_max_reason_fmt => "Base content G has not more than %.2f%% max deviation from baseline (%.2f%%).",
 	    );
@@ -790,7 +790,7 @@ use Data::Dump qw(dump);
 	    test_conf => 'auto_qc_base_content_max_baseline_deviation',
 	    opts      => $opts,
 	    minmax    => ['max'],
-	    value     => $bc->T_percent_max_baseline_deviation(),
+	    value     => $bc->t_percent_max_baseline_deviation(),
 	    above_max_reason_fmt => "Base content T has more than %.2f%% max deviation from baseline (%.2f%%).",
 	    up_to_max_reason_fmt => "Base content T has not more than %.2f%% max deviation from baseline (%.2f%%).",
 	    );
