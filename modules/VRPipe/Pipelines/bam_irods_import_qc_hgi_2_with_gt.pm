@@ -66,6 +66,7 @@ class VRPipe::Pipelines::bam_irods_import_qc_hgi_2_with_gt with VRPipe::Pipeline
             { from_step => 1, to_step => 4, from_key => 'local_files', to_key => 'bam_files' },
             { from_step => 1, to_step => 8, from_key => 'local_files', to_key => 'bam_files' },
             { from_step => 1, to_step => 5, from_key => 'local_files', to_key => 'bam_files' },
+            { from_step => 1, to_step => 11, from_key => 'local_files', to_key => 'bam_files' },
             { from_step => 2, to_step => 10, from_key => 'fasta_gc_stats_file', to_key => 'fasta_gc_stats_file' },
             { from_step => 8, to_step => 9, from_key => 'bamcheck_files', to_key => 'bamcheck_files' },
             { from_step => 1, to_step => 12, from_key => 'local_files', to_key => 'bam_files' },
