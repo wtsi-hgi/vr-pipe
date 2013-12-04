@@ -735,7 +735,7 @@ use Data::Dump qw(dump);
 	    opts      => $opts,
 	    minmax    => ['max'],
 	    value     => $bc->c_percent_total_mean_baseline_deviation(),
-	    above_max_reason_fct => "Base content C has more than %.2f%% deviation across read cycles (%.2f%%).",
+	    above_max_reason_fmt => "Base content C has more than %.2f%% deviation across read cycles (%.2f%%).",
 	    up_to_max_reason_fmt => "Base content C does not have more than %.2f%% deviation across read cycles (%.2f%%).",
 	    );
 	$self->test_minmax(
