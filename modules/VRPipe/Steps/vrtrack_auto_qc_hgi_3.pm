@@ -40,10 +40,13 @@ use VRPipe::Base;
 my $REASON_MAX = 200;
 my $TEST_MAX = 50;
 
+my $STATUS_FAIL = 0;
+my $STATUS_PASS = 1;
+my $STATUS_WARN = 2;
+
 class VRPipe::Steps::vrtrack_auto_qc_hgi_3 extends VRPipe::Steps::vrtrack_update {
     use VRPipe::Parser;
     use MooseX::Singleton;
-use Data::Dump qw(dump);
 
     has 'qc_results' => ( 
 	traits => ['Array'], 
@@ -67,12 +70,12 @@ use Data::Dump qw(dump);
         );
 
     after qc_results_add (ClassName|Object $self: HashRef $result) {
-        return unless ($result->{status} == 2);
+        return unless ($result->{status} == $STATUS_WARN);
         for my $result_comb ($self->result_combinations_elements) {
             if (exists $result_comb->{tests}->{$result->{test}}) {
                  $result_comb->{number}--;
                  if ($result_comb->{number} == 0) {
-                     $self->qc_results_add({test => $result_comb->{name}, status => 0, reason => "Too many warnings"});
+                     $self->qc_results_add({test => $result_comb->{name}, status => $STATUS_FAIL, reason => "Too many warnings"});
                  }
             }
 	}
@@ -188,7 +191,7 @@ use Data::Dump qw(dump);
 	) {
 	
 	if (exists $opts->{$test_conf}) {
-	    my $status = 1;
+	    my $status = $STATUS_PASS;
 	    my $reason = "Pass by default";
 	    my $test_min = 0;
 	    my $test_max = 0;
@@ -210,12 +213,10 @@ use Data::Dump qw(dump);
 			if ($mm eq 'min') {
 			    $test_min = 1;
 			    if (defined($failed_threshold) && $value < $failed_threshold) {
-				# fail
-				$status = 0;
+				$status = $STATUS_FAIL;
 				$reason = sprintf $below_min_reason_fmt, $failed_threshold, $value;
 			    } elsif (defined($warning_threshold) && $value < $warning_threshold) {
-				# warning
-				$status = 2;
+				$status = $STATUS_WARN;
 				$reason = sprintf $below_min_reason_fmt, $warning_threshold, $value;
 			    } else {
 				$min_threshold = $warning_threshold;
@@ -223,12 +224,10 @@ use Data::Dump qw(dump);
 			} elsif ($mm eq 'max') {
 			    $test_max = 1;
 			    if (defined($failed_threshold) && $value > $failed_threshold) {
-				# fail
-				$status = 0;
+				$status = $STATUS_FAIL;
 				$reason = sprintf $above_max_reason_fmt, $failed_threshold, $value;
 			    } elsif (defined($warning_threshold) && $value > $warning_threshold) {
-				# warning
-				$status = 2;
+				$status = $STATUS_WARN;
 				$reason = sprintf $above_max_reason_fmt, $warning_threshold, $value;
 			    } else {
 				$max_threshold = $warning_threshold;
@@ -244,7 +243,7 @@ use Data::Dump qw(dump);
 		    }
 		}
 
-		if ($status == 1) {
+		if ($status == $STATUS_PASS) {
 		    if ($test_min && $test_max) {
 			$self->auto_qc_bad_conf("autoqc missing between_min_max_reason_fmt for $test") unless $between_min_max_reason_fmt;
 			$reason = sprintf $between_min_max_reason_fmt, $min_threshold, $max_threshold, $value;
@@ -257,7 +256,7 @@ use Data::Dump qw(dump);
 		}
 	    } else { # if (defined($value))
 		# value undefined
-		$status = 2;
+		$status = $STATUS_WARN;
 		$reason = "$test value undefined";
 	    }
 	    
@@ -289,10 +288,10 @@ use Data::Dump qw(dump);
 	    $test = 'Empty bam file check';
 	    if ($bc->sequences == 0 && $bc->total_length == 0) { # we use the bamcheck result, not $vrlane results, in case we're looking at unimproved exome bam which will have 0 reads and bases in VRTrack
 		$bam_has_seq = 0;
-		$status = 0;
+		$status = $STATUS_FAIL;
 		$reason = "The bam file provided for this lane contains no sequences.";
 	    } else {
-		$status = 1;
+		$status = $STATUS_PASS;
 		$reason = "The bam file provided for this lane contains sequence.";
 	    }
 	    $self->qc_results_add({ test => $test, status => $status, reason => $reason });
@@ -305,13 +304,13 @@ use Data::Dump qw(dump);
 	    my $npg_status = $vrlane->npg_qc_status;
 	    if ($npg_status) {
 		if ($npg_status eq 'fail') {
-		    $status = 0;
+		    $status = $STATUS_FAIL;
 		    $reason = 'The lane failed the NPG QC check, so we auto-fail as well since this data will not be auto-submitted to EGA/ENA.';
 		} elsif ($npg_status eq 'pass') {
-		    $status = 1;
+		    $status = $STATUS_PASS;
 		    $reason = 'The lane passed the NPG QC check.';
 		} else {
-		    $status = 2;
+		    $status = $STATUS_WARN;
 		    $reason = "The lane had unknown NPG QC status ($npg_status)";
 		}
 	    }
@@ -348,10 +347,10 @@ use Data::Dump qw(dump);
 		}
 		
 		if ($gstatus) {
-		    $status = 1;
+		    $status = $STATUS_PASS;
 		    $reason = qq[The status is '$gstatus'.];
 		    if ($gstatus !~ /$auto_qc_gtype_regex/) {
-			$status = 0;
+			$status = $STATUS_FAIL;
 			$reason = "The status ($gstatus) does not match the regex ($auto_qc_gtype_regex).";
 		    }
 		    $self->qc_results_add({ test => $test, status => $status, reason => $reason });
@@ -384,8 +383,8 @@ use Data::Dump qw(dump);
 	{ # duplicate reads
 	    my $dup_reads_pct = 0;
 	    if ($bam_has_seq) {
-		my $mapped_reads = $mapstats->reads_mapped;
-		my $dup_reads    = $mapped_reads - $mapstats->rmdup_reads_mapped;
+		my $mapped_reads = $bc->reads_mapped;
+		my $dup_reads    = $bc->duplicated_reads();
 		$dup_reads_pct   = 100 * $dup_reads / $mapped_reads;
 	    }
 	    $self->test_minmax(
@@ -400,25 +399,25 @@ use Data::Dump qw(dump);
 	    delete $opts->{auto_qc_duplicate_read_percentage};
 	}
 
-	
-        { # properly paired mapped reads
-	    my $paired_reads_pct = 0;
-	    if ($bam_has_seq) {
-		my $mapped_reads     = $mapstats->reads_mapped;
-		my $paired_reads     = $mapstats->rmdup_reads_mapped;
-		$paired_reads_pct = 100 * $paired_reads / $mapped_reads;
-	    }
-	    $self->test_minmax(
-		test      => 'Reads mapped in a proper pair',
-		test_conf => 'auto_qc_mapped_reads_properly_paired_percentage',
-		opts      => $opts,
-		minmax    => ['min'],
-		value     => $paired_reads_pct,
-		below_min_reason_fmt => "Less than %.1f%% reads that were mapped are in a proper pair (%.2f%%).",
-		at_least_min_reason_fmt => "At least %.1f%% reads that were mapped are in a proper pair (%.2f%%).",
-		);
-	    delete $opts->{auto_qc_mapped_reads_properly_paired_percentage};
-	}
+	# TODO: find actual proper pair count from somewhere and reimplement this
+        # { # properly paired mapped reads
+	#     my $paired_reads_pct = 0;
+	#     if ($bam_has_seq) {
+	# 	my $mapped_reads     = $mapstats->reads_mapped;
+	# 	my $paired_reads     = $mapstats->rmdup_reads_mapped;
+	# 	$paired_reads_pct = 100 * $paired_reads / $mapped_reads;
+	#     }
+	#     $self->test_minmax(
+	# 	test      => 'Reads mapped in a proper pair',
+	# 	test_conf => 'auto_qc_mapped_reads_properly_paired_percentage',
+	# 	opts      => $opts,
+	# 	minmax    => ['min'],
+	# 	value     => $paired_reads_pct,
+	# 	below_min_reason_fmt => "Less than %.1f%% reads that were mapped are in a proper pair (%.2f%%).",
+	# 	at_least_min_reason_fmt => "At least %.1f%% reads that were mapped are in a proper pair (%.2f%%).",
+	# 	);
+	#     delete $opts->{auto_qc_mapped_reads_properly_paired_percentage};
+	# }
 	
         
 	{ # error rate
@@ -512,13 +511,13 @@ use Data::Dump qw(dump);
 		} else {
 		    # no insert-size lines in bamcheck?
 		    $reason = "bamcheck file did not contain insert-size lines";
-		    $status = 2;
+		    $status = $STATUS_WARN;
 		    $self->qc_results_add({ test => $test, status => $status, reason => $reason });
 		}
 	    } else {
 		# multiple read lengths, cannot run this test
 		$reason = "Multiple read lengths in study, cannot run test of bases duplicated due to read of a pair overlapping";
-		$status = 2;
+		$status = $STATUS_WARN;
                 $self->qc_results_add({ test => $test, status => $status, reason => $reason });
 	    }
 	}
@@ -534,10 +533,10 @@ use Data::Dump qw(dump);
             $test = 'Insert size';
             
             if ($mapstats->reads_paired == 0) {
-                $self->qc_results_add({ test => $test, status => 0, reason => 'Zero paired reads, yet flagged as paired' });
+                $self->qc_results_add({ test => $test, status => $STATUS_FAIL, reason => 'Zero paired reads, yet flagged as paired' });
             }
             elsif ($mapstats->mean_insert == 0 || !$bc->insert_size()) {
-                $self->qc_results_add({ test => $test, status => 0, reason => 'The insert size not available, yet flagged as paired' });
+                $self->qc_results_add({ test => $test, status => $STATUS_FAIL, reason => 'The insert size not available, yet flagged as paired' });
             }
             else {
                 # only libraries can be failed based on wrong insert size. The
@@ -546,22 +545,22 @@ use Data::Dump qw(dump);
                 my $peak_win    = $auto_qc_insert_peak_window;
                 my $within_peak = $auto_qc_insert_peak_reads;
                 
-                $status = 1;
+                $status = $STATUS_PASS;
                 my ($amount, $range) = $self->insert_size_allowed_amount_and_range($bc->insert_size(), $peak_win, $within_peak);
                 
                 $reason = sprintf "There are %.1f%% or more inserts within %.1f%% of max peak (%.2f%%).", $within_peak, $peak_win, $amount;
                 if ($amount < $within_peak) {
-                    $status = 0;
+                    $status = $STATUS_FAIL;
                     $reason = sprintf "Fail library, less than %.1f%% of the inserts are within %.1f%% of max peak (%.2f%%).", $within_peak, $peak_win, $amount;
                 }
-                $self->qc_results_add({ test => $test, status => 1, reason => $reason });
+                $self->qc_results_add({ test => $test, status => $STATUS_PASS, reason => $reason });
                 
                 $reason = sprintf "%.1f%% of inserts are contained within %.1f%% of the max peak (%.2f%%).", $within_peak, $peak_win, $range;
                 if ($range > $peak_win) {
-                    $status = 0;
+                    $status = $STATUS_FAIL;
                     $reason = sprintf "Fail library, %.1f%% of inserts are not within %.1f%% of the max peak (%.2f%%).", $within_peak, $peak_win, $range;
                 }
-                $self->qc_results_add({ test => 'Insert size (rev)', status => 1, reason => $reason });
+                $self->qc_results_add({ test => 'Insert size (rev)', status => $STATUS_PASS, reason => $reason });
                 
                 $lib_to_update = VRTrack::Library->new_by_field_value($vrtrack, 'library_id', $vrlane->library_id()) or $self->throw("No vrtrack library for lane $lane?");
                 $lib_status = $status ? 'passed' : 'failed';
@@ -679,45 +678,46 @@ use Data::Dump qw(dump);
 	    );
 	delete $opts->{auto_qc_qual_contig_cycle_high_iqr};
 
-	$self->test_minmax(
-	    test      => 'Quality dropoff fwd contiguous decline cycle count',
-	    test_conf => 'auto_qc_qual_contig_cycle_dropoff_cycles',
-	    opts      => $opts,
-	    minmax    => ['max'],
-	    value     => $bc->quality_dropoff_fwd_mean_runmed_decline_max_contiguous_read_cycles(),
-	    above_max_reason_fmt => "Fwd reads have more than %d contiguous read cycles with declining quality (%d).",
-	    up_to_max_reason_fmt => "Fwd reads do not have more than %d contiguous read cycles with declining quality (%d).",
-	    );
-	$self->test_minmax(
-	    test      => 'Quality dropoff rev contiguous decline cycle count',
-	    test_conf => 'auto_qc_qual_contig_cycle_dropoff_cycles',
-	    opts      => $opts,
-	    minmax    => ['max'],
-	    value     => $bc->quality_dropoff_rev_mean_runmed_decline_max_contiguous_read_cycles(),
-	    above_max_reason_fmt => "Rev reads have more than %d contiguous read cycles with declining quality (%d).",
-	    up_to_max_reason_fmt => "Rev reads do not have more than %d contiguous read cycles with declining quality (%d).",
-	    );
+	my $lowval = 100; # default to absurdly high quality cutoff if lowval is not set in conf 
+	if ( exists($opts->{auto_qc_qual_contig_cycle_dropoff_cycles}{'max'}{'lowval'}) ) {
+	    $lowval = $opts->{auto_qc_qual_contig_cycle_dropoff_cycles}{'max'}{'lowval'};
+	}
+	my $fwd_lowval = $bc->quality_dropoff_fwd_mean_runmed_decline_low_value();
+	$test = 'Quality dropoff fwd contiguous decline cycle count';
+	if ( $fwd_lowval >= $lowval ) {
+	    # if low value at end of decline is still at or above lowval, don't bother with contiguous cycle test
+	    my $status = $STATUS_PASS;
+	    my $reason = "Fwd reads have maximum contiguous quality dropoff that doesn't end below $lowval ($fwd_lowval)";
+	    $self->qc_results_add({ test => $test, status => $status, reason => $reason });
+	} else {
+	    $self->test_minmax(
+		test      => $test,
+		test_conf => 'auto_qc_qual_contig_cycle_dropoff_cycles',
+		opts      => $opts,
+		minmax    => ['max'],
+		value     => $bc->quality_dropoff_fwd_mean_runmed_decline_max_contiguous_read_cycles(),
+		above_max_reason_fmt => "Fwd reads have more than %d contiguous read cycles with declining quality ending below $lowval (%d ending in $fwd_lowval).",
+		up_to_max_reason_fmt => "Fwd reads do not have more than %d contiguous read cycles with declining quality (%d).",
+		);
+	}
+	my $rev_lowval = $bc->quality_dropoff_rev_mean_runmed_decline_low_value();
+	if ( $rev_lowval >= $lowval ) {
+	    # if low value at end of decline is still at or above lowval, don't bother with contiguous cycle test
+	    my $status = $STATUS_PASS;
+	    my $reason = "Rev reads have maximum contiguous quality dropoff that doesn't end below $lowval ($rev_lowval)";
+	    $self->qc_results_add({ test => $test, status => $status, reason => $reason });
+	} else {
+	    $self->test_minmax(
+		test      => 'Quality dropoff rev contiguous decline cycle count',
+		test_conf => 'auto_qc_qual_contig_cycle_dropoff_cycles',
+		opts      => $opts,
+		minmax    => ['max'],
+		value     => $bc->quality_dropoff_rev_mean_runmed_decline_max_contiguous_read_cycles(),
+		above_max_reason_fmt => "Rev reads have more than %d contiguous read cycles with declining quality ending below $lowval (%d ending in $rev_lowval).",
+		up_to_max_reason_fmt => "Rev reads do not have more than %d contiguous read cycles with declining quality (%d).",
+		);
+	}
 	delete $opts->{auto_qc_qual_contig_cycle_dropoff_cycles};
-
-	$self->test_minmax(
-	    test      => 'Quality dropoff fwd contiguous decline low value',
-	    test_conf => 'auto_qc_qual_contig_cycle_dropoff_lowval',
-	    opts      => $opts,
-	    minmax    => ['min'],
-	    value     => $bc->quality_dropoff_fwd_mean_runmed_decline_low_value(),
-	    above_max_reason_fmt => "Fwd reads have longest contiguous decline ending in quality less than %d (%d).",
-	    up_to_max_reason_fmt => "Fwd reads have longest contiguous decline ending in quality not less than %d (%d).",
-	    );
-	$self->test_minmax(
-	    test      => 'Quality dropoff rev contiguous decline low value',
-	    test_conf => 'auto_qc_qual_contig_cycle_dropoff_lowval',
-	    opts      => $opts,
-	    minmax    => ['min'],
-	    value     => $bc->quality_dropoff_rev_mean_runmed_decline_low_value(),
-	    above_max_reason_fmt => "Rev reads have longest contiguous decline ending in quality less than %d (%d).",
-	    up_to_max_reason_fmt => "Rev reads have longest contiguous decline ending in quality not less than %d (%d).",
-	    );
-	delete $opts->{auto_qc_qual_contig_cycle_dropoff_lowval};
 
         # base content deviation (added by bamcheckr::base_content_deviation())
 	$self->test_minmax(
@@ -810,13 +810,13 @@ use Data::Dump qw(dump);
         
         # now output the results
         # Get overall autoqc result
-        $status = 1;
+        $status = $STATUS_PASS;
         for my $stat ($self->qc_results_elements()) {
             if (!$stat->{status}) {
-                $status = 0;
+                $status = $STATUS_FAIL;
                 last;
             } elsif ($stat->{status} == 2) {
-                $status = 2;
+                $status = $STATUS_WARN;
             }
         }
         
@@ -854,9 +854,9 @@ use Data::Dump qw(dump);
                 
                 given ($status)
                 {
-                    when(0) { $vrlane->auto_qc_status('failed'); }
-                    when(1) { $vrlane->auto_qc_status('passed'); }
-                    when(2) { $vrlane->auto_qc_status('warning'); }
+                    when($STATUS_FAIL) { $vrlane->auto_qc_status('failed'); }
+                    when($STATUS_PASS) { $vrlane->auto_qc_status('passed'); }
+                    when($STATUS_WARN) { $vrlane->auto_qc_status('warning'); }
                 }
                 
                 # also, if we did our own genotype check, write those results back
