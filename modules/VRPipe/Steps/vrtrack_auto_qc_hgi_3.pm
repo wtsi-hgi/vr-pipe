@@ -384,7 +384,7 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_3 extends VRPipe::Steps::vrtrack_update
 	    my $dup_reads_pct = 0;
 	    if ($bam_has_seq) {
 		my $mapped_reads = $bc->reads_mapped;
-		my $dup_reads    = $bc->duplicated_reads();
+		my $dup_reads    = $bc->reads_duplicated;
 		$dup_reads_pct   = 100 * $dup_reads / $mapped_reads;
 	    }
 	    $self->test_minmax(
