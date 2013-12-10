@@ -355,6 +355,7 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_3 extends VRPipe::Steps::vrtrack_update
 			    $status = $STATUS_PASS;
 			    $reason = "Genotype check status ($gstatus) matches the regex ($pass_regex).";
 			}
+			delete $auto_qc_gtype_regex->{'passed'};
 		    }
 		    if (exists($auto_qc_gtype_regex->{'warning'})) {
 			my $warn_regex = $auto_qc_gtype_regex->{'warning'};
@@ -362,6 +363,7 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_3 extends VRPipe::Steps::vrtrack_update
 			    $status = $STATUS_WARN;
 			    $reason = "Genotype check status ($gstatus) matches the regex ($warn_regex).";
 			}
+			delete $auto_qc_gtype_regex->{'warning'};
 		    }
 		    if (exists($auto_qc_gtype_regex->{'failed'})) {
 			my $fail_regex = $auto_qc_gtype_regex->{'failed'};
@@ -369,6 +371,10 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_3 extends VRPipe::Steps::vrtrack_update
 			    $status = $STATUS_FAIL;
 			    $reason = "Genotype check status ($gstatus) matches the regex ($fail_regex).";
 			}
+			delete $auto_qc_gtype_regex->{'failed'};
+		    }
+		    if (keys %{$auto_qc_gtype_regex}) {
+			$self->auto_qc_bad_conf("unrecognized options in config file ($auto_qc_settings_file) under auto_qc_gtype_regex: ".join(",", keys %{$auto_qc_gtype_regex})."\n");
 		    }
 		    $self->qc_results_add({ test => $test, status => $status, reason => $reason });
 		}
