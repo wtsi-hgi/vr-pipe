@@ -347,11 +347,28 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_3 extends VRPipe::Steps::vrtrack_update
 		}
 		
 		if ($gstatus) {
-		    $status = $STATUS_PASS;
-		    $reason = qq[The status is '$gstatus'.];
-		    if ($gstatus !~ /$auto_qc_gtype_regex/) {
-			$status = $STATUS_FAIL;
-			$reason = "The status ($gstatus) does not match the regex ($auto_qc_gtype_regex).";
+		    $status = $STATUS_FAIL;
+		    $reason = "Fail by default, no regexes match genotype check status ($gstatus).";
+		    if (exists($auto_qc_gtype_regex->{'passed'})) {
+			my $pass_regex = $auto_qc_gtype_regex->{'passed'};
+			if ($gstatus =~ /$pass_regex/) {
+			    $status = $STATUS_PASS;
+			    $reason = "Genotype check status ($gstatus) matches the regex ($pass_regex).";
+			}
+		    }
+		    if (exists($auto_qc_gtype_regex->{'warning'})) {
+			my $warn_regex = $auto_qc_gtype_regex->{'warning'};
+			if ($gstatus =~ /$warn_regex/) {
+			    $status = $STATUS_WARN;
+			    $reason = "Genotype check status ($gstatus) matches the regex ($warn_regex).";
+			}
+		    }
+		    if (exists($auto_qc_gtype_regex->{'failed'})) {
+			my $fail_regex = $auto_qc_gtype_regex->{'failed'};
+			if ($gstatus =~ /$fail_regex/) {
+			    $status = $STATUS_FAIL;
+			    $reason = "Genotype check status ($gstatus) matches the regex ($fail_regex).";
+			}
 		    }
 		    $self->qc_results_add({ test => $test, status => $status, reason => $reason });
 		}
