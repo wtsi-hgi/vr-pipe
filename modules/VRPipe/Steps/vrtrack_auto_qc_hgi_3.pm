@@ -183,11 +183,11 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_3 extends VRPipe::Steps::vrtrack_update
 	HashRef :$opts, 
 	ArrayRef :$minmax,
 	Maybe[Num] :$value, 
-	Str :$below_min_reason_fmt = "Value below %.1f (%.2f)",
-	Str :$above_max_reason_fmt = "Value above %.1f (%.2f)",
-	Str :$between_min_max_reason_fmt = "Value between %.1f and %.1f (%.2f)",
-	Str :$at_least_min_reason_fmt = "Value at least %.1f (%.2f)",
-	Str :$up_to_max_reason_fmt = "Value not more than %.1f (%.2f)"
+	Str :$below_min_reason_fmt = "Value below %.3f (%.3f)",
+	Str :$above_max_reason_fmt = "Value above %.3f (%.3f)",
+	Str :$between_min_max_reason_fmt = "Value between %.3f and %.3f (%.3f)",
+	Str :$at_least_min_reason_fmt = "Value at least %.3f (%.3f)",
+	Str :$up_to_max_reason_fmt = "Value not more than %.3f (%.3f)"
 	) {
 	
 	if (exists $opts->{$test_conf}) {
@@ -396,8 +396,8 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_3 extends VRPipe::Steps::vrtrack_update
 		opts      => $opts, 
 		minmax    => ['min'],
 		value     => $bases_mapped_pct,
-		below_min_reason_fmt => "Less than %.1f%% bases mapped after clipping (%.2f%%).",
-		at_least_min_reason_fmt => "At least %.1f%% bases mapped after clipping (%.2f%%).",
+		below_min_reason_fmt => "Less than %.2f%% bases mapped after clipping (%.2f%%).",
+		at_least_min_reason_fmt => "At least %.2f%% bases mapped after clipping (%.2f%%).",
 		);
 	    delete $opts->{auto_qc_mapped_base_percentage};
 	}
@@ -416,8 +416,8 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_3 extends VRPipe::Steps::vrtrack_update
 		opts      => $opts,
 		minmax    => ['max'],
 		value     => $dup_reads_pct,
-		above_max_reason_fmt => "More than %.1f%% reads were duplicates (%.2f%%).",
-		up_to_max_reason_fmt => "%.1f%% or less reads were duplicates (%.2f%%).",
+		above_max_reason_fmt => "More than %.2f%% reads were duplicates (%.2f%%).",
+		up_to_max_reason_fmt => "%.2f%% or less reads were duplicates (%.2f%%).",
 		);
 	    delete $opts->{auto_qc_duplicate_read_percentage};
 	}
@@ -478,9 +478,9 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_3 extends VRPipe::Steps::vrtrack_update
 		opts      => $opts,
 		minmax    => ['min', 'max'],
 		value     => $ins_to_del_ratio,
-		below_min_reason_fmt => "The Ins/Del ratio is less than %.1f (%.2f).",
-		above_max_reason_fmt => "The Ins/Del ratio is greater than %.1f (%.2f).",
-		between_min_max_reason_fmt => "The Ins/Del ratio is between %.1f and %.1f (%.2f).",
+		below_min_reason_fmt => "The Ins/Del ratio is less than %.3f (%.3f).",
+		above_max_reason_fmt => "The Ins/Del ratio is greater than %.3f (%.3f).",
+		between_min_max_reason_fmt => "The Ins/Del ratio is between %.3f and %.3f (%.3f).",
 		);
 	    delete $opts->{auto_qc_ins_to_del_ratio};
 	}
@@ -521,7 +521,7 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_3 extends VRPipe::Steps::vrtrack_update
 			$tot_mapped_bases += $pairs_total * ($seqlen * 2);
 		    }
 		    
-		    my $overlap_dup_base_pct = sprintf("%0.1f", ($dup_mapped_bases * 100) / $tot_mapped_bases);
+		    my $overlap_dup_base_pct = sprintf("%0.2f", ($dup_mapped_bases * 100) / $tot_mapped_bases);
 		    $self->test_minmax(
 			test      => $test,
 			test_conf => 'auto_qc_overlapping_base_duplicate_percent',
@@ -571,17 +571,17 @@ class VRPipe::Steps::vrtrack_auto_qc_hgi_3 extends VRPipe::Steps::vrtrack_update
                 $status = $STATUS_PASS;
                 my ($amount, $range) = $self->insert_size_allowed_amount_and_range($bc->insert_size(), $peak_win, $within_peak);
                 
-                $reason = sprintf "There are %.1f%% or more inserts within %.1f%% of max peak (%.2f%%).", $within_peak, $peak_win, $amount;
+                $reason = sprintf "There are %.2f%% or more inserts within %.2f%% of max peak (%.2f%%).", $within_peak, $peak_win, $amount;
                 if ($amount < $within_peak) {
                     $status = $STATUS_FAIL;
-                    $reason = sprintf "Fail library, less than %.1f%% of the inserts are within %.1f%% of max peak (%.2f%%).", $within_peak, $peak_win, $amount;
+                    $reason = sprintf "Fail library, less than %.2f%% of the inserts are within %.2f%% of max peak (%.2f%%).", $within_peak, $peak_win, $amount;
                 }
                 $self->qc_results_add({ test => $test, status => $STATUS_PASS, reason => $reason });
                 
-                $reason = sprintf "%.1f%% of inserts are contained within %.1f%% of the max peak (%.2f%%).", $within_peak, $peak_win, $range;
+                $reason = sprintf "%.2f%% of inserts are contained within %.2f%% of the max peak (%.2f%%).", $within_peak, $peak_win, $range;
                 if ($range > $peak_win) {
                     $status = $STATUS_FAIL;
-                    $reason = sprintf "Fail library, %.1f%% of inserts are not within %.1f%% of the max peak (%.2f%%).", $within_peak, $peak_win, $range;
+                    $reason = sprintf "Fail library, %.2f%% of inserts are not within %.2f%% of the max peak (%.2f%%).", $within_peak, $peak_win, $range;
                 }
                 $self->qc_results_add({ test => 'Insert size (rev)', status => $STATUS_PASS, reason => $reason });
                 
