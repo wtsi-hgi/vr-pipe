@@ -1,3 +1,79 @@
+0.186   Fix to stop restarting steps that by design do no create their output
+        files, when the output files do not have all required metadata.
+0.185   Fixed bug in VRPipe::File->openw to prevent deep recursion when lacking
+        permission to write.
+        VRTrack datasource analysis_genome_studio method now allows grouping on
+        analysis_uuid.
+        irods datasource now sets the type of files to their type in irods.
+        irods_analysis_files_download step now outputs analysis and input files
+        under different output keys. It also adds irods_local_storage_dir
+        metadata to say where the irods_analysis_files were downloaded to.
+        vrtrack_populate_from_vrpipe_metadata step now sets library ssid and
+        tag sequence.
+        pluritest_annotation_profile_files step now (only) works with idat files
+        from the irods datasource.
+0.184   Sanger-specific improvements to the irods datasource, and a new step and
+        pipeline to update a VRTrack database and import the files based on the
+        irods datasource.
+0.183   Fixed the new bam_improvement_gatk_v2 pipeline.
+        StepCmdSummary version strings can now be up to 64 characters long.
+        Full support for setting and getting multiple values per metadata key
+        has been added to Files.
+        The irods datasource now stores multiple values for the same metadata
+        key, and the all_with_warehouse_metadata method now gets all the
+        Sanger-specific metadata we'd need for complete tracking.
+0.182   New vcf_merge_different_samples_control_aware step.
+        New vcf_merge_different_samples_to_indexed_bcf and hipsci_loh_caller
+        steps and pipelines.
+        New bam_improvement_gatk_v2 pipeline for doing the recalibration part
+        of the improvement pipeline with GATK v2 or higher (v3 needed for
+        working with bams produced by bwa mem).
+        iRODs datasource now has the Sanger-specific warehouse code split out
+        in to a new all_with_warehouse_metadata method.
+        htscmd_genotype_analysis now confirms the genotype when the expected
+        sample has a score with a ratio of 1.000 to the score of the highest
+        score.
+        bwa_mem_fastq and bam_merge_lane_splits steps now pass through sample_id
+        metadata.
+0.181   Critical fix for infinite restart bug affecting setups for pipelines
+        with temp files where the user set a unix_group.
+        pluritest_annotation_profile_files step now does case insensitive
+        matching on its regex options and only considers annotation files with
+        9 columns.
+0.180   Fixed resolve bug in vrpipe-fileinfo.
+        htscmd_gtcheck step now has a expected_sample_from_metadata_key option.
+        split_genome_studio_genotype_files step fixed to get correct samples.
+        penncnv_detect_cnv step now has a perl_for_penncnv_exe option.
+0.179   The unix_group option during vrpipe-setup no longer results in file
+        permissions changing for files produced by other setups.
+        Added r_libs option to pluritest_plot_gene_expression step to allow it
+        to be used with a specific R install.
+        vcf_merge_different_samples step now works with the latest bcftools.
+        genome_studio_import_from_irods pipeline replaced with
+        genome_studio_import_from_irods_and_convert_to_vcf pipeline featuring
+        new illumina_coreexome_manifest_to_map step and updated
+        genome_studio_fcr_to_vcf step that both use fcr-to-vcf script from the
+        vr-codebase git repository.
+        Steps in VRPipe can now specify that they take as input arbitrary file
+        types, useful for when your step takes multiple different text formats
+        and you need to distinguish between them or take these from the
+        datasource.
+        The irods step got a search_by_metadata() method.
+        The sequenom_csv_to_vcf step now takes a sequenom_plex_storage_dir and
+        reference_name option and gets the correct plex manifest from irods.
+        The irods datasource now queries the Sanger-specific 'warehouse'
+        database and adds public_name and donor_id metadata to files.
+0.178   Front-end vrpipe-* scripts now strip control codes the user may enter
+        while typing.
+        Fix for the vcf_merge step so that it works when the post_merge_vcftools
+        option includes a .gz path.
+0.177   vrpipe-handler for setups can sometimes need more memory, so its
+        requirements have been increased to 2900MB.
+        vrpipe-permissions now has a --filter option to pick files to alter
+        based on their metadata.
+        vrtrack datasource now checks individual name and alias, and prefers to
+        use alias as the individual.
+        New Sanger-specific sequenom import pipeline.
 0.176   Hotfix so that the vrtrack datasource ignores when a lane changes to
         0 reads.
 0.175   Hotfix so that the vrtrack datasource notices and updates when a lane
