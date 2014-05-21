@@ -57,9 +57,9 @@ class VRPipe::Steps::sequenom_csv_to_vcf extends VRPipe::Steps::irods {
                 default_value => 'seq'
             ),
             vcf_sample_from_metadata => VRPipe::StepOption->create(
-                description   => 'in the output VCF use the sample name from a metadata value stored on the input csv file',
+                description   => 'in the output VCF use the sample name from a metadata value stored on the input csv file; separate multiple keys with + symbols - values will be joined with underscores',
                 optional      => 1,
-                default_value => 'sample'
+                default_value => 'public_name+sample'
             ),
             sequenom_plex_storage_dir    => VRPipe::StepOption->create(description => 'absolute path to a directory where plex manifest files can be stored'),
             sequencescape_reference_name => VRPipe::StepOption->create(
@@ -80,6 +80,11 @@ class VRPipe::Steps::sequenom_csv_to_vcf extends VRPipe::Steps::irods {
                 description   => 'path to the bgzip executable',
                 optional      => 1,
                 default_value => 'bgzip'
+            ),
+            bcftools_exe => VRPipe::StepOption->create(
+                description   => 'path to the bcftools executable',
+                optional      => 1,
+                default_value => 'bcftools'
             )
         };
     }
@@ -108,6 +113,11 @@ class VRPipe::Steps::sequenom_csv_to_vcf extends VRPipe::Steps::irods {
                     sequenom_plex   => 'sequenom plate plex identifier',
                     sequenom_gender => 'gender of sample derived from sequenom result'
                 }
+            ),
+            vcf_index => VRPipe::StepIODefinition->create(
+                type        => 'bin',
+                description => 'index of the vcf file',
+                max_files   => -1
             )
         };
     }
@@ -117,6 +127,7 @@ class VRPipe::Steps::sequenom_csv_to_vcf extends VRPipe::Steps::irods {
             my $self    = shift;
             my $options = $self->options;
             
+            my $bcftools_exe  = $options->{bcftools_exe};
             my $vcf_sort      = $options->{vcf_sort_exe};
             my $vcf_sort_opts = $options->{vcf_sort_options};
             if ($vcf_sort_opts) {
@@ -143,8 +154,9 @@ class VRPipe::Steps::sequenom_csv_to_vcf extends VRPipe::Steps::irods {
                 $self->output_file(basename => $unsorted, type => 'vcf', temporary => 1);
                 my $vcf_file_path = $self->output_file(output_key => 'vcf_files', basename => $basename, type => 'vcf', metadata => $csv_file->metadata)->path;
                 my $csv_file_path = $csv_file->path;
+                $self->output_file(output_key => 'vcf_index', basename => $basename . '.csi', type => 'bin')->path;
                 
-                my $cmd = "use VRPipe::Steps::sequenom_csv_to_vcf; VRPipe::Steps::sequenom_csv_to_vcf->csv_to_vcf(csv => q[$csv_file_path], vcf => q[$vcf_file_path], manifest_dir => q[$manifest_dir], reference_name => q[$ref_name], vcf_sample_from_metadata => q[$vcf_sample_from_metadata], vcf_sort => q[$vcf_sort], bgzip => q[$bgzip], imeta => q[$imeta], iget => q[$iget], ichksum => q[$ichksum], zone => q[$zone]);";
+                my $cmd = "use VRPipe::Steps::sequenom_csv_to_vcf; VRPipe::Steps::sequenom_csv_to_vcf->csv_to_vcf(csv => q[$csv_file_path], vcf => q[$vcf_file_path], manifest_dir => q[$manifest_dir], reference_name => q[$ref_name], vcf_sample_from_metadata => q[$vcf_sample_from_metadata], vcf_sort => q[$vcf_sort], bgzip => q[$bgzip], bcftools => q[$bcftools_exe], imeta => q[$imeta], iget => q[$iget], ichksum => q[$ichksum], zone => q[$zone]);";
                 $self->dispatch_vrpipecode($cmd, $req);
             }
         };
@@ -162,12 +174,13 @@ class VRPipe::Steps::sequenom_csv_to_vcf extends VRPipe::Steps::irods {
         return "Convert a CSV file containing sequenom results into a sorted compressed VCF suitable for calling with.";
     }
     
-    method csv_to_vcf (ClassName|Object $self: Str|File :$csv, Str|File :$vcf, Str :$vcf_sort, Str :$bgzip, Str|Dir :$manifest_dir, Str :$reference_name, Str :$imeta, Str :$iget, Str :$ichksum, Str :$zone, Str :$vcf_sample_from_metadata = 'sample') {
+    method csv_to_vcf (ClassName|Object $self: Str|File :$csv, Str|File :$vcf, Str :$vcf_sort, Str :$bgzip, Str :$bcftools, Str|Dir :$manifest_dir, Str :$reference_name, Str :$imeta, Str :$iget, Str :$ichksum, Str :$zone, Str :$vcf_sample_from_metadata = 'public_name+sample') {
         my $csv_file = VRPipe::File->get(path => $csv);
         my $vcf_file = VRPipe::File->get(path => $vcf);
         my $vcf_file_unsorted = $vcf;
         $vcf_file_unsorted =~ s/\.vcf.gz$/.unsorted.vcf/;
         $vcf_file_unsorted = VRPipe::File->get(path => $vcf_file_unsorted);
+        my @vsfm_keys = split(/\+/, $vcf_sample_from_metadata);
         
         # figure out the correct snp manifest file to use based on plex and
         # reference
@@ -212,7 +225,7 @@ class VRPipe::Steps::sequenom_csv_to_vcf extends VRPipe::Steps::irods {
         # get date and sample name for VCF header
         my $dt     = DateTime->now;
         my $date   = $dt->ymd('');
-        my $sample = $csv_file->meta_value($vcf_sample_from_metadata);
+        my $sample = join('_', map { $csv_file->meta_value($_) } @vsfm_keys);
         $vcf_file->disconnect;
         
         # print VCF header
@@ -277,11 +290,16 @@ class VRPipe::Steps::sequenom_csv_to_vcf extends VRPipe::Steps::irods {
             
             # match the alleles against the ref alleles
             my $match_one = my $match_two = 0;
-            if ($allele ne $ref_allele) {
-                $match_one = 1;
+            if (length($genotype) == 0) {
+                $match_one = $match_two = '.';
             }
-            if ($allele_two ne $ref_allele) {
-                $match_two = 1;
+            else {
+                if ($allele ne $ref_allele) {
+                    $match_one = 1;
+                }
+                if ($allele_two ne $ref_allele) {
+                    $match_two = 1;
+                }
             }
             
             #*** no idea if further flipping as per genome_studio_fcr_to_vcf
@@ -330,6 +348,9 @@ class VRPipe::Steps::sequenom_csv_to_vcf extends VRPipe::Steps::irods {
             $gender = 'M';
         }
         $vcf_file->add_metadata({ sequenom_gender => $gender, sequenom_plex => $sequenom_plex });
+        
+        # index it
+        system("$bcftools index $vcf") && die "Failed to index $vcf\n";
     }
 }
 
