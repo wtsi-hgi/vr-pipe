@@ -77,7 +77,7 @@ class VRPipe::Steps::convex_gam_correction extends VRPipe::Steps::r_script {
                 
                 $l2r_path =~ s/\.rd\.txt$/.l2r.txt/; # L2R file in same dir as RD file
                 
-                my $cmd = $self->rscript_cmd_prefix . " $convex_rscript_path/GAMCorrectionPerSample.R $l2r_path,$features_file,$gam_path,$rd_path,$breakpoints_file";
+                my $cmd = $self->rscript_cmd_prefix . " $convex_rscript_path/GAMCorrectionPerSample.R $l2r_path,$features_file,$gam_path,$rd_path,$breakpoints_file,0";
                 
                 $self->dispatch_wrapped_cmd('VRPipe::Steps::convex_gam_correction', 'run_gam_correction', [$cmd, $req, { output_files => [$gam_file] }]);
             }

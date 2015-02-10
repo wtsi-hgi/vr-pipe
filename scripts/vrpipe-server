@@ -350,7 +350,7 @@ sub start_server {
                         $scheduler->ensure_running(
                             cmd => $shcmd,
                             $deployment eq 'testing' ? (cwd => $cwd) : (),
-                            requirements => VRPipe::Requirements->create(memory => 2900, time => 3600)
+                            requirements => VRPipe::Requirements->create(memory => 2900, time => 3600, cpus => 2)
                         );
                         
                         # make sure we have sufficient submission handlers

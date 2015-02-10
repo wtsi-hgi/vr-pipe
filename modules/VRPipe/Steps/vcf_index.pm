@@ -53,7 +53,7 @@ class VRPipe::Steps::vcf_index with VRPipe::StepRole {
             foreach my $vcf (@{ $self->inputs->{vcf_files} }) {
                 my $vcf_path = $vcf->path;
                 my $basename = $vcf->basename;
-                my $tbi      = $self->output_file(output_key => 'tbi_file', output_dir => $vcf->dir, basename => $basename . '.tbi', type => 'bin');
+                my $tbi      = $self->output_file(output_key => 'tbi_file', output_dir => $vcf->dir, basename => $basename . '.tbi', type => 'bin', metadata => $vcf->metadata);
                 
                 my $cmd = "$tabix_exe -f -p vcf $vcf_path;";
                 $self->dispatch([$cmd, $req, { output_files => [$tbi] }]);

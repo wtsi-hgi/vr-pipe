@@ -50,7 +50,12 @@ class VRPipe::Steps::bwa_sam_using_bam with VRPipe::StepRole {
                 description   => 'path to your bwa executable',
                 optional      => 1,
                 default_value => 'bwa'
-            )
+            ),
+            lane_name_as_rg_id => VRPipe::StepOption->create(
+                description   => 'Whether or not to use lane name as @RG ID, if not just use 1.',
+                optional      => 1,
+                default_value => '1'
+            ),
         };
     }
     
@@ -177,7 +182,13 @@ class VRPipe::Steps::bwa_sam_using_bam with VRPipe::StepRole {
                     }
                     
                     # add metadata and construct RG line
-                    my $rg_line  = '@RG\tID:' . $lane;
+                    my $lane_name_as_rg_id = $options->{lane_name_as_rg_id};
+                    my $rg_line;
+                    if (defined $lane_name_as_rg_id && $lane_name_as_rg_id eq '0' ) {
+                        $rg_line = '@RG\tID:1';
+                    } else {
+                        $rg_line = '@RG\tID:'.$lane;
+                    }
                     my $sam_meta = {
                         lane         => $lane,
                         bases        => $bases,

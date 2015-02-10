@@ -631,7 +631,8 @@ class VRPipe::Parser::bamcheck with VRPipe::ParserRole {
         GCD => 'gc_depth',
         MPC => 'mismatches_per_cycle',
         GCC => 'gc_content_per_cycle',
-        RL  => 'read_lengths'
+        RL  => 'read_lengths',
+	CHK => 'checksums',
     ); # we don't actually use this mapping except to confirm what sections we understand
     
     has 'first_fragment_qualities' => (
@@ -722,6 +723,15 @@ class VRPipe::Parser::bamcheck with VRPipe::ParserRole {
         handles => { '_push_RL' => 'push' }
     );
 
+    has 'checksums' => (
+        traits  => ['Array'],
+        is      => 'ro',
+        isa     => 'ArrayRef[ArrayRef[Str]]',
+        default => sub { [] },
+        handles => { '_push_CHK' => 'push' }
+    );
+
+
 =head2 parsed_record
  
  Title   : parsed_record
@@ -772,7 +782,8 @@ class VRPipe::Parser::bamcheck with VRPipe::ParserRole {
                     $self->warn("unexpected SN line $orig_method");
                     next;
                 }
-                $value = undef if $method =~ /^_fwd_|^_rev_/ && $value eq'NA';
+                #$value = undef if $method =~ /^_fwd_|^_rev_/ && $value eq'NA'; ad7 - altered this line so that $value not set to NA in quality.dropoff
+                $value = undef if $method =~ /^_fwd_|^_rev_|^_quality/ && $value eq'NA';
                 $self->$method($value);
                 $saw++;
             }

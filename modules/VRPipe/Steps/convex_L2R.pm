@@ -96,8 +96,11 @@ class VRPipe::Steps::convex_L2R extends VRPipe::Steps::r_script {
             
             my $corr_matrix_file = $self->output_file(output_key => 'corr_matrix_file', basename => 'corr_matrix.txt', type => 'txt');
             my $corr_matrix_file_path = $corr_matrix_file->path;
-            
-            my $cmd = $self->rscript_cmd_prefix . " $convex_rscript_path/SampleLogRatioCall.R $sample_info_path,$regions_file,$features_file_path,$includeChrX,$corr_matrix_file_path,$version,$rpkm,$minSamples";
+
+            my $sample_means_file = $self->output_file(output_key => 'sample_means_file', basename => 'sample_means_file.txt', type => 'txt');
+            my $sample_means_file_path = $sample_means_file->path;   
+         
+            my $cmd = $self->rscript_cmd_prefix . " $convex_rscript_path/SampleLogRatioCall.R $sample_info_path,$regions_file,$features_file_path,$includeChrX,$corr_matrix_file_path,$version,$rpkm,$minSamples,$sample_means_file_path";
             $self->dispatch([$cmd, $req]);
         };
     }
@@ -106,6 +109,7 @@ class VRPipe::Steps::convex_L2R extends VRPipe::Steps::r_script {
         return {
             features_file    => VRPipe::StepIODefinition->create(type => 'txt', max_files => 1,  description => 'a single convex features file for each set of L2R files'),
             corr_matrix_file => VRPipe::StepIODefinition->create(type => 'txt', max_files => 1,  description => 'a single convex correlation matrix file for each set of L2R files'),
+            sample_means_file => VRPipe::StepIODefinition->create(type => 'txt', max_files => 1,  description => 'a single sample means file file for each set of L2R files'),
             l2r_files        => VRPipe::StepIODefinition->create(type => 'txt', max_files => -1, description => 'a log 2 ratio file for each input read depths file'),
         };
     }
