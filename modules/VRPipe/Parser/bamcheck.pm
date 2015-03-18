@@ -633,6 +633,8 @@ class VRPipe::Parser::bamcheck with VRPipe::ParserRole {
         GCC => 'gc_content_per_cycle',
         RL  => 'read_lengths',
 	CHK => 'checksums',
+        RMAP => 'reads_mapped_and_paired',
+        RPP => 'reads_properly_paired',
     ); # we don't actually use this mapping except to confirm what sections we understand
     
     has 'first_fragment_qualities' => (
