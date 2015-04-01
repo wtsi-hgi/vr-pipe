@@ -490,7 +490,7 @@ class VRPipe::Job extends VRPipe::Persistent {
                         if ($allowed_time) {
                             my $wall_time = $self->wall_time;
                             my $time_cmp  = '<';
-                            if ($wall_time >= $allowed_time) {
+                            if ($wall_time >= $allowed_time || $signal eq 'USR2') {
                                 $time_cmp = '>';
                                 my $new_time = (ceil($wall_time / 60 / 60) + 1) * 60 * 60;
                                 $submission->extra_time($new_time - $submission->time);
