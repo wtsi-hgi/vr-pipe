@@ -5,9 +5,10 @@ use Cwd;
 use File::Copy;
 use Path::Class qw(file dir);
 use POSIX qw(getgroups);
+use VRPipe::Interface::CmdLine;
 
 BEGIN {
-    use Test::Most tests => 14;
+    use Test::Most tests => 17;
     use VRPipeTest;
     use TestPipelines;
 }
@@ -251,8 +252,8 @@ is handle_pipeline(@md5_output_files), 1, 'all md5 files were created via Manage
         },
         body_sub => sub {
             my $self = shift;
-            my @bams = grep { $_->path =~ /\.bam$/ } @{ $self->inputs->{bam_files} };
-            my @fqs  = grep { $_->path =~ /\.fastq$/ } @{ $self->inputs->{fastq_files} };
+            my @bams = @{ $self->inputs->{bam_files} };
+            my @fqs  = @{ $self->inputs->{fastq_files} };
             if (@bams == 1 && @fqs == 2) {
                 foreach my $file (@bams, @fqs) {
                     $file->add_metadata({ ok => 1 });
@@ -277,6 +278,48 @@ is handle_pipeline(@md5_output_files), 1, 'all md5 files were created via Manage
         $oks++ if $file->metadata->{ok};
     }
     is $oks, 6, 'we were able to run a pipeline where a step took files of 2 different types from the datasource';
+    
+    # it should also work with arbitrary file types where we have no
+    # VRPipe::FileType::module written
+    $ds = VRPipe::DataSource->create(
+        type    => 'fofn_with_metadata',
+        method  => 'grouped_by_metadata',
+        source  => file(qw(t data datasource.fofnwm_mixed_unknown_types)),
+        options => { metadata_keys => 'lane' }
+    );
+    $single_step = VRPipe::Step->create(
+        name              => 'two_unknown_type_step',
+        inputs_definition => {
+            type1_files => VRPipe::StepIODefinition->create(type => 'typ1', description => 'typ1 files', max_files => -1, metadata => { lane => 'lane name' }),
+            type2_files => VRPipe::StepIODefinition->create(type => 'typ2', description => 'typ2 files', max_files => -1, metadata => { lane => 'lane name' })
+        },
+        body_sub => sub {
+            my $self   = shift;
+            my @type1s = @{ $self->inputs->{type1_files} };
+            my @type2s = @{ $self->inputs->{type2_files} };
+            if (@type2s == 1 && @type1s == 2) {
+                foreach my $file (@type1s, @type2s) {
+                    $file->add_metadata({ ok => 1 });
+                }
+            }
+        },
+        outputs_definition => {},
+        post_process_sub   => sub { return 1 },
+        description        => 'a step that takes 2 different unknown file types'
+    );
+    $two_type_pipeline = VRPipe::Pipeline->create(name => 'two_unknown_type_step_pipeline', description => 'two_unknown_type_step pipeline');
+    VRPipe::StepAdaptor->create(pipeline => $two_type_pipeline, to_step => 1, adaptor_hash => { type1_files => { data_element => 0 }, type2_files => { data_element => 0 } });
+    $two_type_pipeline->add_step($single_step);
+    
+    VRPipe::PipelineSetup->create(name => 'two_unknown_type_one_step_ps', datasource => $ds, output_root => $output_root, pipeline => $two_type_pipeline);
+    handle_pipeline();
+    
+    $oks = 0;
+    foreach my $basename (qw(2822_6_1.typ1 2822_6_2.typ1 2822_6.pe.typ2 2822_7_1.typ1 2822_7_2.typ1 2822_7.pe.typ2)) {
+        my $file = VRPipe::File->get(path => file('t', 'data', $basename)->absolute);
+        $oks++ if $file->metadata->{ok};
+    }
+    is $oks, 6, 'we were able to run a pipeline where a step took files of 2 different unknown types from the datasource';
 }
 
 # when a job fails and is retried, test that we can get access to previous
@@ -320,6 +363,114 @@ is handle_pipeline(@md5_output_files), 1, 'all md5 files were created via Manage
         err => { "1 - undef" => 3, "2 - stderr message: failing on purpose since this is try 2" => 3, "3 - stderr message: failing on purpose since this is try 1" => 3 }
       },
       'The job stdout and stderr of all 3 attempts on all 3 elements could be retrieved';
+}
+
+# test vrpipe-submissions --full_reset and --partial_reset work as expected
+{
+    # make a single-step pipeline that fails or succeeds based on metadata
+    my $output_root = get_output_dir('fail_on_demand_pipeline');
+    
+    my $ds = VRPipe::DataSource->create(
+        type   => 'fofn',
+        method => 'all',
+        source => file(qw(t data annotation.fofn))
+    );
+    
+    my $input_file = VRPipe::File->create(path => file(qw(t data annotation.vcf.gz))->absolute, metadata => { fail => 1 });
+    
+    my $step = VRPipe::Step->create(
+        name              => 'fail_on_demand',
+        inputs_definition => { fod_input => VRPipe::StepIODefinition->create(type => 'vcf', description => 'fod input') },
+        body_sub          => sub {
+            my $self         = shift;
+            my ($input_file) = @{ $self->inputs->{fod_input} };
+            my $fail         = $input_file->meta_value('fail');
+            my $req          = $self->new_requirements(memory => 1, time => 1);
+            for (1 .. 3) {
+                my $ofile = $self->output_file(output_key => 'fod_output', basename => "output$_.txt", type => 'txt');
+                my $opath = $ofile->path;
+                my $cmd   = qq{echo "output for $_" >> $opath};
+                if ($_ == 2 && $fail) {
+                    $self->dispatch([qq{$cmd; false}, $req, { output_files => [$ofile] }]);
+                }
+                else {
+                    $self->dispatch([qq{$cmd; true}, $req]);
+                }
+            }
+        },
+        outputs_definition => { fod_output => VRPipe::StepIODefinition->create(type => 'txt', description => 'fod_output file') },
+        post_process_sub   => sub          { return 1 },
+        description        => 'fail on demand step'
+    );
+    
+    my $pipeline = VRPipe::Pipeline->create(name => 'fod_pipeline', description => 'pipeline that fails on demand');
+    VRPipe::StepAdaptor->create(pipeline => $pipeline, to_step => 1, adaptor_hash => { fod_input => { data_element => 0 } });
+    $pipeline->add_step($step);
+    
+    my $setup = VRPipe::PipelineSetup->create(name => 'fod setup', datasource => $ds, output_root => $output_root, pipeline => $pipeline);
+    wait_till_setup_done($setup);
+    
+    my (@ofiles, @mtimes);
+    my ($element) = VRPipe::DataElement->search({ datasource => $ds });
+    foreach my $i (1 .. 3) {
+        push(@ofiles, file(output_subdirs($element->id, $setup->id), '1_fail_on_demand', "output$i.txt"));
+        push(@mtimes, $ofiles[-1]->stat->mtime);
+    }
+    
+    my $perl     = VRPipe::Interface::CmdLine->vrpipe_perl_command('testing');
+    my $setup_id = $setup->id;
+    `$perl scripts/vrpipe-submissions --deployment testing --setup $setup_id -f --full_reset`;
+    
+    wait_till_setup_done($setup);
+    
+    my $all_good = 1;
+    for (0 .. 2) {
+        my $ofile = $ofiles[$_];
+        
+        my $expected_content = "output for " . ($_ + 1) . "\n";
+        if ($expected_content ne $ofile->slurp) {
+            $all_good = 0;
+            last;
+        }
+        
+        my $mtime = $ofile->stat->mtime;
+        unless ($mtime > $mtimes[$_]) {
+            $all_good = 0;
+            last;
+        }
+        $mtimes[$_] = $mtime;
+    }
+    ok $all_good, 'vrpipe-submissions -f --full_reset worked as expected';
+    
+    `$perl scripts/vrpipe-submissions --deployment testing --setup $setup_id --partial_reset`;
+    
+    wait_till_setup_done($setup);
+    
+    $all_good = 1;
+    for (0 .. 2) {
+        my $ofile = $ofiles[$_];
+        my $mtime = $ofile->stat->mtime;
+        
+        if ($_ == 1) {
+            unless ($mtime > $mtimes[1]) {
+                $all_good = 0;
+                last;
+            }
+        }
+        else {
+            unless ($mtime == $mtimes[$_]) {
+                $all_good = 0;
+                last;
+            }
+        }
+        
+        my $expected_content = "output for " . ($_ + 1) . "\n";
+        if ($expected_content ne $ofile->slurp) {
+            $all_good = 0;
+            last;
+        }
+    }
+    ok $all_good, 'vrpipe-submissions --partial_reset worked as expected';
 }
 
 finish;

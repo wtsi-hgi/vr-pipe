@@ -32,7 +32,7 @@ Sendu Bala <sb10@sanger.ac.uk>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2011-2013 Genome Research Limited.
+Copyright (c) 2011-2014 Genome Research Limited.
 
 This file is part of VRPipe.
 
@@ -247,7 +247,10 @@ class VRPipe::PipelineSetup extends VRPipe::Persistent {
         }
         else {
             $mode = 'all des';
-            $pager = $datasource->incomplete_element_states($self, prepare => $prepare_elements, only_not_started => $first_step_only);
+            eval { $pager = $datasource->incomplete_element_states($self, prepare => $prepare_elements, only_not_started => $first_step_only); };
+            if ($@) {
+                return "DataSource error: $@";
+            }
             $self->debug("trigger on all for setup " . $self->id . ", got " . $pager->total_entries . " incomplete element states");
         }
         return unless $pager; #*** is it ever an error to have no pager?
@@ -320,7 +323,7 @@ class VRPipe::PipelineSetup extends VRPipe::Persistent {
                         # have we previously done the dispatch dance and are
                         # currently waiting on submissions to complete?
                         my @submissions = $state->submissions;
-                        if (@submissions) {
+                        if (($state->dispatched || ($state->same_submissions_as && $state->same_submissions_as->dispatched)) && @submissions) {
                             $self->debug("had submissions");
                             my @unfinished = VRPipe::Submission->get_column_values('id', { '_done' => 0, stepstate => $state->submission_search_id });
                             unless (@unfinished) {
@@ -483,6 +486,8 @@ class VRPipe::PipelineSetup extends VRPipe::Persistent {
                             }
                             elsif (!defined $parse_return) {
                                 $self->log_event("PipelineSetup->trigger called parse(), which dispatched nothing and completed instantly", dataelement => $element->id, stepstate => $state->id);
+                                $state->dispatched(1);
+                                $state->update;
                                 $self->_complete_state($step, $state, $step_number, $pipeline, $estate);
                                 $self->debug("instant complete after parse");
                                 $do_next = 1;
@@ -585,6 +590,8 @@ class VRPipe::PipelineSetup extends VRPipe::Persistent {
                                             my $sub = VRPipe::Submission->create(job => VRPipe::Job->create(dir => $output_root, $job_args ? (%{$job_args}) : (), cmd => $cmd)->id, stepstate => $state->submission_search_id, requirements => $reqs->id);
                                             $self->log_event("PipelineSetup->trigger called parse(), and the dispatch created a new Submission", dataelement => $element->id, stepstate => $state->id, submission => $sub->id, job => $sub->job->id);
                                         }
+                                        $state->dispatched(1);
+                                        $state->update;
                                         $self->debug("created new subs");
                                         $do_last = 1;
                                         return;
