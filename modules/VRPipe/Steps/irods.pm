@@ -91,7 +91,7 @@ class VRPipe::Steps::irods with VRPipe::StepRole {
         return 40;
     }
     
-    method get_file_by_basename (ClassName|Object $self: Str :$basename!, Str|File :$dest!, Str :$zone = 'seq', Str|File :$iget!, Str|File :$iquest!, Str|File :$ichksum!, Str|File :$samtools_for_cram_to_bam?) {
+    method get_file_by_basename (ClassName|Object $self: Str :$basename!, Str|File :$dest!, Str :$zone = 'seq', Str|File :$iget!, Str|File :$iquest!, Str|File :$ichksum!, Str :$path_regex?, Str|File :$samtools_for_cram_to_bam?) {
         my $dest_file = VRPipe::File->get(path => $dest);
         $dest_file->disconnect;
         
@@ -114,7 +114,9 @@ class VRPipe::Steps::irods with VRPipe::StepRole {
             if (/^DATA_NAME = (.+)$/) {
                 $filename = $1;
             }
+            last if ($path && $filename && defined($path_regex) && join('/', ($path, $filename)) =~ m/$path_regex/);
         }
+        unless (!defined($path_regex) ||($path && $filename && join('/', ($path, $filename)) =~ m/$path_regex/)) { $self->throw("No files found that match $path_regex"); }
         
         if ($path && $filename) {
             unless ($filename eq $basename) {

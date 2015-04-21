@@ -50,7 +50,12 @@ class VRPipe::Steps::irods_get_files_by_basename extends VRPipe::Steps::irods {
                 description   => "when getting a cram file from irods, convert it to a bam file; 0 turns this off, the absolute path to a samtools v1+ executable turns this on",
                 optional      => 1,
                 default_value => 0
-            )
+            ),
+            irods_path_regex => VRPipe::StepOption->create(
+                description   => "regex to match irods paths against",
+                optional      => 1,
+                default_value => '\/seq\/[0-9]+\/[0-9_#]+\.(b|cr)am'
+            ),
         };
     }
     
@@ -79,6 +84,7 @@ class VRPipe::Steps::irods_get_files_by_basename extends VRPipe::Steps::irods {
             my $iquest           = $opts->{iquest_exe};
             my $ichksum          = $opts->{ichksum_exe};
             my $samtools         = $opts->{irods_convert_cram_to_bam};
+            my $path_regex       = $opts->{irods_path_regex};
             my $cram_to_bam_mode = $samtools && -x $samtools;
             
             my $req = $self->new_requirements(memory => 500, time => 1);
@@ -104,7 +110,7 @@ class VRPipe::Steps::irods_get_files_by_basename extends VRPipe::Steps::irods {
                         $self->dispatch_vrpipecode(qq[use VRPipe::Steps::irods_get_files_by_basename; VRPipe::Steps::irods_get_files_by_basename->get_file(source => q[$meta->{irods_path}], dest => q[$dest], iget => q[$iget], ichksum => q[$ichksum]$extra);], $req);
                     }
                     else {
-                        $self->dispatch_vrpipecode(qq[use VRPipe::Steps::irods_get_files_by_basename; VRPipe::Steps::irods_get_files_by_basename->get_file_by_basename(basename => q[$basename], dest => q[$dest], zone => q[$zone], iget => q[$iget], iquest => q[$iquest], ichksum => q[$ichksum]$extra);], $req);
+                        $self->dispatch_vrpipecode(qq[use VRPipe::Steps::irods_get_files_by_basename; VRPipe::Steps::irods_get_files_by_basename->get_file_by_basename(basename => q[$basename], dest => q[$dest], zone => q[$zone], iget => q[$iget], iquest => q[$iquest], ichksum => q[$ichksum], path_regex => q[${path_regex}]$extra);], $req);
                     }
                 }
                 else {
