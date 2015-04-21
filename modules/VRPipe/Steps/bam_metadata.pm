@@ -88,7 +88,7 @@ class VRPipe::Steps::bam_metadata extends VRPipe::Steps::bamcheck {
                 unless ($meta_count == @{ $self->meta_to_check }) {
                     my $check_file = $self->output_file(basename => $ifile->basename . '.bamcheck', type => 'txt', temporary => 1);
                     my $ofile = $check_file->path;
-                    $self->dispatch_wrapped_cmd('VRPipe::Steps::bamcheck', 'stats_from_bamcheck', ["$bamcheck_exe $bamcheck_opts $ifile > $ofile", $req, { output_files => [$check_file] }]);
+                    $self->dispatch_vrpipecode("use VRPipe::Steps::bamcheck; VRPipe::Steps::bamcheck->stats_from_bamcheck(q[$bamcheck_exe $bamcheck_opts $ifile > $ofile], 0, 0);", $req, { output_files => [$check_file] });
                 }
                 
                 # we'll also check the header for existing PG lines and store
