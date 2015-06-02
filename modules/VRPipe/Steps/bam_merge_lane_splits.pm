@@ -115,7 +115,9 @@ class VRPipe::Steps::bam_merge_lane_splits with VRPipe::StepRole {
             
             my $source_key;
             my ($lane, %bams, %metas);
-            foreach my $bam (@{ $self->inputs->{bam_files} }) {
+            my @bams_unsorted = @{ $self->inputs->{bam_files}};
+            my @bams_sorted = sort { $a->metadata->{chunk} > $b->metadata->{chunk} } @bams_unsorted;
+            foreach my $bam (@bams_sorted) {
                 my $this_path = $bam->path;
                 
                 my $meta      = $bam->metadata;
