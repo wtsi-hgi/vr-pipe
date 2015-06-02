@@ -36,6 +36,8 @@ use VRPipe::Base;
 class VRPipe::Steps::irods with VRPipe::StepRole {
     use VRPipe::Schema;
     
+    our $schema;
+    
     has 'irods_exes' => (
         is      => 'ro',
         isa     => 'HashRef',
@@ -91,7 +93,7 @@ class VRPipe::Steps::irods with VRPipe::StepRole {
         return 40;
     }
     
-    method get_file_by_basename (ClassName|Object $self: Str :$basename!, Str|File :$dest!, Str :$zone = 'seq', Str|File :$iget!, Str|File :$iquest!, Str|File :$ichksum!, Str :$path_regex?, Str|File :$samtools_for_cram_to_bam?) {
+    method get_file_by_basename (ClassName|Object $self: Str :$basename!, Str|File :$dest!, Str :$zone = 'seq', Str|File :$iget!, Str|File :$iquest!, Str|File :$ichksum!, Str :$path_regex?, Str|File :$samtools_for_cram_to_bam?, Str :$iget_args?, Str :$ichksum_args?) {
         my $dest_file = VRPipe::File->get(path => $dest);
         $dest_file->disconnect;
         
@@ -124,30 +126,30 @@ class VRPipe::Steps::irods with VRPipe::StepRole {
             }
             my $irods_file = join('/', ($path, $filename));
             
-            $self->get_file(source => $irods_file, dest => $dest_file->path, iget => $iget, ichksum => $ichksum, $samtools_for_cram_to_bam ? (samtools_for_cram_to_bam => $samtools_for_cram_to_bam) : ());
+            $self->get_file(source => $irods_file, dest => $dest_file->path, iget => $iget, ichksum => $ichksum, $samtools_for_cram_to_bam ? (samtools_for_cram_to_bam => $samtools_for_cram_to_bam) : (), $iget_args ? (iget_args => $iget_args) : (), $ichksum_args ? (ichksum_args => $ichksum_args) : ());
         }
         else {
             $self->throw("A file with basename $basename could not be found in iRods zone $zone");
         }
     }
     
-    method get_file_md5 (ClassName|Object $self: Str :$file!, Str|File :$ichksum!) {
-        my ($chksum) = $self->open_irods_command("$ichksum $file");
-        my ($md5)    = $chksum =~ m/\b([0-9a-f]{32})\b/i;          # 32 char MD5 hex string
+    method get_file_md5 (ClassName|Object $self: Str :$file!, Str|File :$ichksum!, Str :$ichksum_args!) {
+        my ($chksum) = $self->open_irods_command("$ichksum $ichksum_args $file");
+        my ($md5)    = $chksum =~ m/\b([0-9a-f]{32})\b/i;                        # 32 char MD5 hex string
         unless ($md5) {
-            $self->throw("Could not determine md5 of $file in IRODS ('$ichksum $file' returned '$chksum'; aborted");
+            $self->throw("Could not determine md5 of $file in IRODS ('$ichksum $ichksum_args $file' returned '$chksum'; aborted");
         }
         return $md5;
     }
     
-    method get_file (ClassName|Object $self: Str :$source!, Str|File :$dest!, Str|File :$iget!, Str|File :$ichksum!, Bool :$add_metadata?, Str|File :$imeta?, Str|File :$samtools_for_cram_to_bam?) {
+    method get_file (ClassName|Object $self: Str :$source!, Str|File :$dest!, Str|File :$iget!, Str|File :$ichksum!, Bool :$add_metadata?, Str|File :$imeta?, Str|File :$samtools_for_cram_to_bam?, Str :$iget_args = '-K -f', Str :$ichksum_args = '') {
         my $dest_file = VRPipe::File->get(path => $dest);
         $dest_file->disconnect;
 
         # check we've not downloaded it already
-        my $irodschksum = $self->get_file_md5(file => $source, ichksum => $ichksum);
+        my $irodschksum = $self->get_file_md5(file => $source, ichksum => $ichksum, ichksum_args => $ichksum_args);
         my $expected_md5 = $dest_file->metadata->{expected_md5} || $irodschksum;
-        $expected_md5 = $irodschksum if ref($expected_md5);        # if we have multiple expected_md5 in an array ref, it can't really be the expected md5 of this file
+        $expected_md5 = $irodschksum if ref($expected_md5);                      # if we have multiple expected_md5 in an array ref, it can't really be the expected md5 of this file
         if ( -e $dest ) {
             my $already_got_it = $dest_file->verify_md5($dest, $expected_md5);
             if ( $already_got_it ) {
@@ -166,14 +168,17 @@ class VRPipe::Steps::irods with VRPipe::StepRole {
         my $failed;
         my $converted_cram_to_bam = 0;
         if ($samtools_for_cram_to_bam && $source =~ /\.cram$/ && $dest =~ /\.bam$/) {
-            $failed                = $self->run_irods_command("$iget $source - | $samtools_for_cram_to_bam view -b - > $dest");
+            $iget_args =~ s/-?[Kf]//g;                                           #*** doesn't support options that take alphanumeric args... hopefully this doesn't come up...
+            $iget_args =~ s/^\s+//;
+            $iget_args =~ s/\s+$//;
+            $failed                = $self->run_irods_command("$iget $iget_args $source - | $samtools_for_cram_to_bam view -b - > $dest");
             $converted_cram_to_bam = 1;
         }
         else {
             # -K: checksum
             # -Q: use UDP rather than TCP
             # -f: force overwrite
-            $failed = $self->run_irods_command("$iget -K -f $source $dest");
+            $failed = $self->run_irods_command("$iget $iget_args $source $dest");
         }
         
         $dest_file->update_stats_from_disc;
@@ -222,7 +227,11 @@ class VRPipe::Steps::irods with VRPipe::StepRole {
         }
         
         # relate source file to dest file in the graph database
-        $self->relate_input_to_output($source, 'imported', $dest_file->path->stringify);
+        $schema ||= VRPipe::Schema->create('VRPipe');
+        my $source_graph_node = $schema->get('File', { path => $source, protocol => 'irods:' }) || $schema->get('File', { path => $source });
+        if ($source_graph_node) {
+            $self->relate_input_to_output($source_graph_node, 'imported', $dest_file->path->stringify);
+        }
     }
     
     method get_file_metadata (ClassName|Object $self: Str $path!, Str|File :$imeta = 'imeta') {

@@ -1,7 +1,7 @@
 
 =head1 NAME
 
-VRPipe::Steps::bam_name_sort - a step
+VRPipe::Steps::bam_sort - a step
 
 =head1 DESCRIPTION
 
@@ -9,11 +9,11 @@ VRPipe::Steps::bam_name_sort - a step
 
 =head1 AUTHOR
 
-Sendu Bala <sb10@sanger.ac.uk>.
+Shane McCarthy <sm15@sanger.ac.uk>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2011 Genome Research Limited.
+Copyright (c) 2015 Genome Research Limited.
 
 This file is part of VRPipe.
 
@@ -33,29 +33,7 @@ this program. If not, see L<http://www.gnu.org/licenses/>.
 
 use VRPipe::Base;
 
-class VRPipe::Steps::bam_sort with VRPipe::StepRole {
-    method options_definition {
-        return {
-            samtools_exe => VRPipe::StepOption->create(
-                description   => 'path to your samtools executable',
-                optional      => 1,
-                default_value => 'samtools'
-            ),
-            samtools_sort_options => VRPipe::StepOption->create(description => 'command line options for samtools sort, excluding -n and -o', optional => 1)
-        };
-    }
-    
-    method inputs_definition {
-        return {
-            bam_files => VRPipe::StepIODefinition->create(
-                type        => 'bam',
-                max_files   => -1,
-                description => '1 or more bam files'
-            )
-        };
-    
-    }
-    
+class VRPipe::Steps::bam_sort extends VRPipe::Steps::bam_name_sort {
     method body_sub {
         return sub {
             my $self    = shift;
@@ -63,7 +41,7 @@ class VRPipe::Steps::bam_sort with VRPipe::StepRole {
             
             my $samtools = $options->{samtools_exe};
             
-            my $opts      = "sort ";
+            my $opts      = "sort";
             my $user_opts = $options->{samtools_sort_options};
             my $mem       = 768;                              # the samtools sort default
             if ($user_opts) {
@@ -90,22 +68,22 @@ class VRPipe::Steps::bam_sort with VRPipe::StepRole {
                 $out_base =~ s/\.bam$//;
                 $out_base .= '.sorted.bam';
                 my $bam_meta = $bam->metadata;
-                my $sort_bam_file = $self->output_file(output_key => 'sorted_bam_files', basename => $out_base, type => 'bam', metadata => $bam_meta);
+                my $sort_bam_file = $self->output_file(output_key => 'coord_sorted_bam_files', basename => $out_base, type => 'bam', metadata => $bam_meta);
                 
                 my $out_prefix = $sort_bam_file->path;
                 $out_prefix =~ s/\.bam$//;
                 my $this_cmd = "$samtools $opts " . $bam->path . " $out_prefix";
-                $self->dispatch_wrapped_cmd('VRPipe::Steps::bam_sort', 'sort_and_check', [$this_cmd, $req, { output_files => [$sort_bam_file] }]);
+                $self->dispatch_wrapped_cmd('VRPipe::Steps::bam_name_sort', 'sort_and_check', [$this_cmd, $req, { output_files => [$sort_bam_file] }]);
             }
         };
     }
     
     method outputs_definition {
         return {
-            sorted_bam_files => VRPipe::StepIODefinition->create(
+            coord_sorted_bam_files => VRPipe::StepIODefinition->create(
                 type        => 'bam',
                 max_files   => -1,
-                description => 'a name-sorted bam file'
+                description => 'a cordinate sorted bam file'
             )
         };
     }
@@ -115,36 +93,11 @@ class VRPipe::Steps::bam_sort with VRPipe::StepRole {
     }
     
     method description {
-        return "Name-sorts a bam file, producing a new bam file";
+        return "Coordinate-sorts a BAM file using samtools sort";
     }
     
     method max_simultaneous {
         return 0;            # meaning unlimited
-    }
-    
-    method sort_and_check (ClassName|Object $self: Str $cmd_line) {
-        my ($in_path, $out_path) = $cmd_line =~ /(\S+) (\S+)$/;
-        $in_path  || $self->throw("cmd_line [$cmd_line] was not constructed as expected");
-        $out_path || $self->throw("cmd_line [$cmd_line] was not constructed as expected");
-        $out_path .= '.bam';
-        
-        my $in_file  = VRPipe::File->get(path => $in_path);
-        my $out_file = VRPipe::File->get(path => $out_path);
-        
-        $in_file->disconnect;
-        system($cmd_line) && $self->throw("failed to run [$cmd_line]");
-        
-        $out_file->update_stats_from_disc(retries => 3);
-        my $expected_reads = $in_file->metadata->{reads} || $in_file->num_records;
-        my $actual_reads = $out_file->num_records;
-        
-        if ($actual_reads == $expected_reads) {
-            return 1;
-        }
-        else {
-            $out_file->unlink;
-            $self->throw("cmd [$cmd_line] failed because $actual_reads reads were generated in the output bam file, yet there were $expected_reads reads in the original bam file");
-        }
     }
 }
 

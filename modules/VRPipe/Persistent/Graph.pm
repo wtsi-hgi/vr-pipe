@@ -59,7 +59,7 @@ Sendu Bala <sb10@sanger.ac.uk>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2014 Genome Research Limited.
+Copyright (c) 2014, 2015 Genome Research Limited.
 
 This file is part of VRPipe.
 
@@ -87,6 +87,7 @@ class VRPipe::Persistent::Graph {
     use JSON::XS;
     use Data::UUID;
     use DateTime::Format::Natural;
+    use MIME::Base64;
     
     our $json       = JSON::XS->new->allow_nonref(1);
     our $data_uuid  = Data::UUID->new();
@@ -126,8 +127,20 @@ class VRPipe::Persistent::Graph {
             # connect and get the transaction endpoint
             my $method_name = $deployment . '_neo4j_server_url';
             my $url         = $vrp_config->$method_name();
-            my $tx          = $ua->get("$url" => $ua_headers);
-            my $res         = $tx->success;
+            $method_name = $deployment . '_neo4j_user';
+            my $user = $vrp_config->$method_name();
+            $method_name = $deployment . '_neo4j_password';
+            my $password = $vrp_config->$method_name();
+            
+            if ($user && $password) {
+                # Requests should include an Authorization header, with a value
+                # of Basic <payload>, where "payload" is a base64 encoded string
+                # of "username:password"
+                $ua_headers->{Authorization} = 'Basic ' . substr(encode_base64("$user:$password"), 0, -2);
+            }
+            
+            my $tx = $ua->get("$url" => $ua_headers);
+            my $res = $tx->success;
             unless ($res) {
                 my $err = $tx->error;
                 $self->throw("Failed to connect to '$url': [$err->{code}] $err->{message}");
@@ -688,6 +701,13 @@ class VRPipe::Persistent::Graph {
         return;
     }
     
+    method node_remove_property (HashRef|Object $node!, Str $property!) {
+        my $id = $self->node_id($node);
+        my ($updated_node) = @{ $self->_run_cypher([["MATCH (n) WHERE id(n) = $id REMOVE n.`$property` return n"]])->{nodes} };
+        $node->{properties} = $updated_node->{properties};
+        return;
+    }
+    
     # selfish => 1 means that the start node can be related to unlimited
     # end_nodes, but the end_node can only be related to a single node with the
     # same label (and relationship type) as the start node.
@@ -744,6 +764,22 @@ class VRPipe::Persistent::Graph {
         $self->_run_cypher(\@cypher);
     }
     
+    # delete all relationships between 2 nodes, optionally limited by type
+    method divorce (HashRef|Object $start_node!, HashRef|Object $end_node!, Str :$type?) {
+        $type ||= '';
+        $type &&= ':' . $type;
+        my $cypher = "MATCH (a)-[rel$type]-(b) WHERE id(a) = $start_node->{id} AND id(b) = $end_node->{id} DELETE rel";
+        $self->_run_cypher([[$cypher]]);
+    }
+    
+    method relationship_set_properties (HashRef $rel!, HashRef $properties!) {
+        my $id = $rel->{id};
+        my $properties_map = $self->_param_map($properties, 'param');
+        my ($updated_rel) = @{ $self->_run_cypher([["MATCH ()-[r]->() WHERE id(r) = $id SET r = $properties_map return r", { 'param' => $properties }]])->{relationships} };
+        $rel->{properties} = $updated_rel->{properties};
+        return;
+    }
+    
     # incoming/outgoing/undirected hash refs are {min_depth, max_depth, type,
     # namespace, label, properties}, where the later 3 are result node specs and
     # with depths defaulting to 1 and others defaulting to undef; none supplied
@@ -763,7 +799,9 @@ class VRPipe::Persistent::Graph {
         if ($undirected) {
             my ($result_node_spec, $properties, $type, $min_depth, $max_depth) = $self->_related_nodes_hashref_parse($undirected, 'param');
             my $return = $result_nodes_only ? 'u' : 'p';
-            return $self->_run_cypher([["MATCH p = (start)-[$type*$min_depth..$max_depth]-(u$result_node_spec) WHERE id(start) = $start_id RETURN $return", { 'param' => $properties }]]);
+            my $depth = ($min_depth == 1 && $max_depth == 1) ? '' : "*$min_depth..$max_depth";
+            my $cypher = "MATCH p = (start)-[$type$depth]-(u$result_node_spec) WHERE id(start) = $start_id RETURN $return";
+            return $self->_run_cypher([[$cypher, { 'param' => $properties }]]);
         }
         else {
             my (%all_properties, @return);
@@ -771,7 +809,8 @@ class VRPipe::Persistent::Graph {
             my $left = '';
             if ($incoming) {
                 my ($result_node_spec, $properties, $type, $min_depth, $max_depth) = $self->_related_nodes_hashref_parse($incoming, 'left');
-                $left = "(l$result_node_spec)-[$type*$min_depth..$max_depth]->";
+                my $depth = ($min_depth == 1 && $max_depth == 1) ? '' : "*$min_depth..$max_depth";
+                $left = "(l$result_node_spec)-[$type$depth]->";
                 push(@return, 'l');
                 $all_properties{left} = $properties if $properties;
                 if ($incoming->{leftmost} && $max_depth > 1) {
@@ -781,7 +820,8 @@ class VRPipe::Persistent::Graph {
             my $right = '';
             if ($outgoing) {
                 my ($result_node_spec, $properties, $type, $min_depth, $max_depth) = $self->_related_nodes_hashref_parse($outgoing, 'right');
-                $right = "-[$type*$min_depth..$max_depth]->(r$result_node_spec)";
+                my $depth = ($min_depth == 1 && $max_depth == 1) ? '' : "*$min_depth..$max_depth";
+                $right = "-[$type$depth]->(r$result_node_spec)";
                 push(@return, 'r');
                 $all_properties{right} = $properties if $properties;
                 if ($outgoing->{rightmost} && $max_depth > 1) {

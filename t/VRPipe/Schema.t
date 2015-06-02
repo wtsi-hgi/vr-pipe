@@ -4,7 +4,7 @@ use warnings;
 use Path::Class;
 
 BEGIN {
-    use Test::Most tests => 100;
+    use Test::Most tests => 146;
     use VRPipeTest;
     use_ok('VRPipe::Schema');
     use_ok('VRPipe::File');
@@ -150,7 +150,7 @@ is $schema->date_to_epoch('2013-05-10 06:45:32'), 1368168332, 'date_to_epoch() w
 # unique uuid properties auto-fill if not supplied
 ok my $bam_stats = $schema->add('Bam_Stats', { mode => 'normal', options => '-foo', 'raw total sequences' => 100, date => $bs_date }), 'could add a new node without supplying its unique value when the unique is a uuid';
 like $bam_stats->uuid, qr/\w{8}-\w{4}-\w{4}-\w{4}-\w{12}/, 'the resulting node has a uuid';
-is $bam_stats->raw_total_sequences(), 100, 'we can call a property method that has spaces in the name';
+is $bam_stats->property('raw total sequences'), 100, 'we can get a property that has spaces in the name';
 
 # test the VRTrack-specific ensure_sequencing_hierarchy method
 ok my $hierarchy = $schema->ensure_sequencing_hierarchy(lane => 'esh_lane1', library => 'esh_library1', sample => 'esh_sample1', study => 'esh_study1', group => 'esh_group1', taxon => 'esh_taxon1'), 'ensure_sequencing_hierarchy() worked';
@@ -186,6 +186,15 @@ my @second_queue = ($schema->get('Sample', { name => 'enqueue1' }), $schema->get
 is_deeply [[sort map { $_->name() } @second_queue], [sort map { $_->node_id() } @second_queue], $second_queue[0]->public_name], [['enqueue1', 'enqueue2', 'enqueue3'], [$expected_queue[0]->node_id, $expected_queue[1]->node_id, $second_queue[2]->node_id], 'enqueue1_public_b'], 'dispatch_queue() was able to update, leave alone and add a new node';
 @history = $second_queue[0]->property_history();
 is_deeply [$history[0]->{properties}->{public_name}, $history[1]->{properties}->{public_name}], ['enqueue1_public_b', 'enqueue1_public_a'], 'history was maintained on a node updated via dispatch_queue()';
+
+# before creating the VRPipe schema, test that related() on a VRTrack node can
+# return fully-functional VRPipe nodes
+$graph->add_schema(namespace => 'VRPipe', label => 'FileSystemElement', unique => [qw(uuid)], indexed => [qw(basename md5 path)]);
+my $fse_node = $graph->add_node(namespace => 'VRPipe', label => 'FileSystemElement', properties => { uuid => 'myuuid', basename => 'basename.txt', foo => 'bar' });
+$eshsam2->relate_to($fse_node, 'file');
+ok my ($rel) = $eshsam2->related(outgoing => { type => 'file' }), 'got the FSE node related to a Sample node before creating a VRPipe schema';
+ok $rel->can("basename"), 'the FSE node is fully functional, with a basename method';
+is $rel->property('foo'), 'bar', 'and the property() method works as well, useful for allow_anything properties';
 
 # test some VRPipe-specific things
 my $vrpipe = VRPipe::Schema->create('VRPipe');
@@ -233,6 +242,60 @@ $vrpipe->make_path($tmp_sub_dir);
 my $mv_path = file($tmp_sub_dir, 'move')->stringify;
 ok $vrfile->move(VRPipe::File->create(path => $mv_path)), 'moved a file';
 is_deeply [$vrpipe->parent_filesystemelement($sym_path)->node_id, $vrpipe->parent_filesystemelement($cp_path)->node_id, $vrpipe->parent_filesystemelement($symcp_path)->node_id, $vrpipe->parent_filesystemelement($sym_path)->path, $graph_file->path], [$graph_file->node_id, $graph_file->node_id, $graph_file->node_id, $mv_path, $mv_path], 'after moving the source file the graph of source and symlink and copy is still correct';
+my $lrpath     = '/a/path/that/could/be/local/or/remote.txt';
+my $local_file = $vrpipe->add('File', { path => $lrpath });
+my $irods_file = $vrpipe->add('File', { path => $lrpath, protocol => 'irods:' });
+isnt $local_file->uuid, $irods_file->uuid, 'local and remote files with the same absolute paths have different uuids';
+my $lf = $vrpipe->get('File', { path => $lrpath });
+is $lf->uuid, $local_file->uuid, 'you can get a local file that shares the same path with a remote file';
+my $if = $vrpipe->get('File', { path => $lrpath, protocol => 'irods:' });
+is $if->uuid, $irods_file->uuid, 'you can get a remote file that shares the same path with a local file';
+is $local_file->path, $lrpath, 'path of an local file according to path() looks normal';
+is $irods_file->path, "irods:$lrpath", 'path of an irods file according to path() contains the protocol';
+is $irods_file->{properties}->{path}, $lrpath, 'path property of the irods file does not contain the protocol';
+$vrpipe->move_filesystemelement($irods_file, '/moved/irods/file.txt', protocol => 'irods:');
+is $irods_file->path, "irods:/moved/irods/file.txt", 'you can move an irods file';
+my $ftp_file = $vrpipe->add('File', { path => $lrpath, protocol => 'ftp://user:pass@host:port' });
+is $ftp_file->path, 'ftp://user:pass@host:port' . $lrpath, 'you can specify protocols with passwords and get it back via path()';
+is $ftp_file->path(1), $lrpath, 'path(1) returns the path without the protocol';
+is $ftp_file->protocolless_path, $lrpath, 'as does protocolless_path()';
+my ($ftp_root, $ftp_first_dir) = reverse($ftp_file->related(incoming => { max_depth => 500, namespace => 'VRPipe', label => 'FileSystemElement', type => 'contains' }));
+isnt $ftp_root->basename(), 'ftp://user:pass@host:port/', 'however the password is not stored as plain text in the graph db';
+my $ftp_file_uuid = $ftp_file->uuid;
+$vrpipe->move_filesystemelement($ftp_first_dir, $ftp_first_dir->path(1), protocol => 'ftp://user:changedpass@host:port');
+my $ff = $vrpipe->get('File', { path => $lrpath, protocol => 'ftp://user:changedpass@host:port' });
+is $ff->uuid, $ftp_file_uuid, 'if your ftp password changed, you could just move the first directory and everything would update automatically';
+is $ff->protocol, 'ftp://user:changedpass@host:port', 'protocol() works for an ftp file';
+is $ff->protocol(1), 'ftp', 'protocol(1) works for an ftp file';
+is $local_file->protocol, 'file:/', 'protocol() works for a local file';
+is $local_file->protocol(1), 'file', 'protocol(1) works for a local file';
+my $real_local_path = file(qw(t data file.txt))->absolute->stringify;
+my $real_local_file = $vrpipe->add('File', { path => $real_local_path });
+is $real_local_file->cat_cmd, "cat $real_local_path", 'cat_cmd() works on a local file';
+my @expected_data_file_lines = ("a text file\n", "with two lines\n");
+ok $fh = $real_local_file->openr, 'openr() method worked on a local file';
+my @lines = <$fh>;
+is_deeply \@lines, \@expected_data_file_lines, 'the filehandle really works on a local file and let us read the file';
+ok $real_local_file->close, 'close() worked on a local file';
+SKIP: {
+    my $num_tests = 4;
+    skip "author-only tests for reading a file from irods", $num_tests unless ($ENV{VRPIPE_AUTHOR_TESTS} && $ENV{VRPIPE_IRODS_TEST_ROOT} && $ENV{VRPIPE_IRODS_TEST_RESOURCE});
+    my $irods_root     = $ENV{VRPIPE_IRODS_TEST_ROOT};
+    my $irods_resource = $ENV{VRPIPE_IRODS_TEST_RESOURCE};
+    system("irm -fr $irods_root > /dev/null 2> /dev/null");
+    system("imkdir -p $irods_root");
+    system("iput -R $irods_resource $real_local_path $irods_root");
+    
+    my $real_irods_path = "$irods_root/file.txt";
+    my $real_irods_file = $vrpipe->add('File', { path => $real_irods_path, protocol => 'irods:' });
+    is $real_irods_file->cat_cmd, "iget $real_irods_path -", 'cat_cmd() works on an irods file';
+    ok $fh = $real_irods_file->openr, 'openr() method worked on an irods file';
+    @lines = <$fh>;
+    is_deeply \@lines, \@expected_data_file_lines, 'the filehandle really works on an irods file and let us read the file';
+    ok $real_irods_file->close, 'close() worked on an irods file';
+    
+    system("irm -fr $irods_root");
+}
 
 # make a traditional mysql vrpipe StepState so we can test that
 # ensure_state_hierarchy() can represent the same thing in the graph database
@@ -251,8 +314,14 @@ is scalar(@related), 21, 'all the related nodes were also created';
 #*** more detailed, specific tests to make sure the graph is correct? checked visually it's fine...
 
 # test VRTrack schema's add_file method, which passes through to VRPipe schema
-ok my $vrtrack_file = $schema->add_file('/bar/snake.txt'), 'add_file() method on the VRTrack schema worked';
-is $vrtrack_file->path, '/bar/snake.txt', 'the path() method worked on what that returned';
+my $bar_snake = '/bar/snake.txt';
+ok my $vrtrack_file = $schema->add_file($bar_snake), 'add_file() method on the VRTrack schema worked';
+is $vrtrack_file->path, $bar_snake, 'the path() method worked on what that returned';
+ok my $vrtrack_irods_file = $schema->add_file($bar_snake, 'irods:'), 'add_file() method on the VRTrack schema worked with a protocol';
+isnt $vrtrack_file->uuid, $vrtrack_irods_file->uuid, 'local and irods files with the same path are different nodes';
+is $schema->get_file($bar_snake)->uuid, $vrtrack_file->uuid, 'VRTrack get_file gets the correct file with no protocol';
+is $schema->get_file($bar_snake, 'irods:')->uuid, $vrtrack_irods_file->uuid, 'VRTrack get_file gets the correct file with a protocol';
+is $vrtrack_irods_file->path, 'irods:' . $bar_snake, 'path() is correct for an irods file';
 
 # check there are no issues supplying ints versus strings to unique values
 $schema->add('Study', { id => 2625,   name => 'str_vs_int_test', accession => 'svitacc' });
@@ -270,6 +339,43 @@ is_deeply $study->{properties}, { id => 2626, name => 'Study ERP006001: Deep seq
 
 # check that fixes for the above didn't break cypher queries with node ids
 my $donor = $schema->add('Donor', { id => 'd1' }, outgoing => { type => 'has', node => $sample });
-ok my $extra_info_node = $schema->get_node_by_id_with_extra_info('Donor', $donor->{id});
+ok my $extra_info_node = $schema->get_node_by_id_with_extra_info('Donor', $donor->{id}), 'cypher queries with node ids work';
+
+# test divorce_from()
+my $samson  = $schema->add('Group', { name => 'Samson' });
+my $delilah = $schema->add('Group', { name => 'Delilah' });
+$samson->relate_to($delilah, 'loves');
+$delilah->relate_to($samson, 'betrays');
+@related = $samson->related(outgoing => {});
+is_deeply [sort map { $_->node_id } @related], [$delilah->node_id], 'Samson is related to Delilah';
+@related = $delilah->related(outgoing => {});
+is_deeply [sort map { $_->node_id } @related], [$samson->node_id], 'Delilah is related to Samson';
+$delilah->divorce_from($samson, 'loves');
+@related = $samson->related(outgoing => {});
+is scalar(@related), 0, 'Samson is no longer related to Delilah after divorce_from on loves';
+@related = $delilah->related(outgoing => {});
+is_deeply [sort map { $_->node_id } @related], [$samson->node_id], 'Delilah is still related to Samson';
+$samson->divorce_from($delilah);
+@related = $samson->related(outgoing => {});
+is scalar(@related), 0, 'Samson is sill not related to Delilah after divorce_from on all';
+@related = $delilah->related(outgoing => {});
+is scalar(@related), 0, 'and now Delilah is not related to Samson';
+
+# check that we can have arrayref properties
+ok my $ganode = $schema->add('Group', { name => 'foo', qc_fail_reasons => ['one', 'two', 'three'] }), 'we can set a property with an array while creating the node';
+is_deeply $ganode->qc_fail_reasons(), ['one', 'two', 'three'], 'we can get array values of a property';
+ok $ganode->qc_fail_reasons(['four', 'five', 'six']), 'we can set a property with an array using the auto get/setter';
+$ganode = $schema->get('Group', { name => 'foo' });
+is_deeply $ganode->qc_fail_reasons(), ['four', 'five', 'six'], 'setting an array with the get/setter really worked';
+
+# test removing properties, and how history works with that
+my $bps = $schema->add('Sample', { name => 'bps', public_name => ['b', 'p', 's'] });
+throws_ok { $bps->remove_property('name') } qr/Property 'name' supplied, but that's unique for schema VRTrack::Sample and can't be changed/, 'remove_property() throws when given a unique property';
+ok $bps->remove_property('public_name'), 'remove_property() worked on a normal property';
+is_deeply [$bps->{properties}, $bps->changed()], [{ name => 'bps' }, { public_name => [['b', 'p', 's'], undef] }], 'properties and changed() after removal of a property give expected results';
+$bps->add_properties({ public_name => 'pn' });
+@history = $bps->property_history('public_name');
+@history_properties = map { $_->{properties} } @history;
+is_deeply [@history_properties], [{ public_name => 'pn' }, {}, { public_name => ['b', 'p', 's'] }], 'property_history() works correctly on a property that had at one point been removed';
 
 exit;

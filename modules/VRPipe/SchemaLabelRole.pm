@@ -45,6 +45,8 @@ role VRPipe::SchemaLabelRole {
     my $graph = VRPipe::Persistent::Graph->new();
     my $pwh;
     
+    our %created_namespaces;
+    
     has 'valid_properties' => (
         traits  => ['Hash'],
         is      => 'ro',
@@ -60,7 +62,7 @@ role VRPipe::SchemaLabelRole {
         return { map { $_ => 1 } ($self->unique_properties, $self->required_properties, $self->other_properties) };
     }
     
-    method _get_setter (Str $property!, Str $new_value?) {
+    method _get_setter (Str $property!, Str|ArrayRef[Str] $new_value?) {
         # this should only be called by the auto-generated accessor methods, in
         # which case we don't need to check that $property is valid
         
@@ -72,7 +74,10 @@ role VRPipe::SchemaLabelRole {
             }
             
             $self->block_until_locked();
-            $graph->node_add_properties($self, { $property => $new_value });
+            # all property values (except array refs) need to be stringified
+            # because Neo4J treats an int and string of the same number as
+            # unique so you might not be able to search for a number otherwise
+            $graph->node_add_properties($self, { $property => defined $new_value ? (ref($new_value) ? $new_value : "$new_value") : undef });
             $self->_maintain_property_history(0);
             $self->unlock();
         }
@@ -98,6 +103,10 @@ role VRPipe::SchemaLabelRole {
     method own_lock {
         my $lock_key = 'Schema.Node.' . $self->node_id();
         return $im->locked($lock_key, by_me => 1);
+    }
+    
+    method property (Str $property) {
+        return $graph->node_property($self, $property);
     }
     
     method properties (Bool :$flatten_parents = 0) {
@@ -138,6 +147,12 @@ role VRPipe::SchemaLabelRole {
             $properties = \%props_to_set;
         }
         
+        # all property values (except array refs) need to be stringified
+        # because Neo4J treats an int and string of the same number as
+        # unique so you might not be able to search for a number otherwise
+        my %props_to_set = map { $_ => defined $properties->{$_} ? (ref($properties->{$_}) ? $properties->{$_} : "$properties->{$_}") : undef } keys %$properties;
+        $properties = \%props_to_set;
+        
         $graph->$graph_method($self, $properties);
         $self->_maintain_property_history($replace);
         $self->unlock();
@@ -153,10 +168,10 @@ role VRPipe::SchemaLabelRole {
                 $history_props->{$key} = $val;
             }
         }
-        return unless $history_props;
+        return unless ($history_props || $replace);
         
         $pwh ||= VRPipe::Schema->create('PropertiesWithHistory');
-        my $changed_properties = $pwh->_add_or_update_properties($graph, $self, $history_props, replace => $replace);
+        my $changed_properties = $pwh->_add_or_update_properties($graph, $self, $history_props || {}, replace => $replace);
         $self->{changed_properties} = $changed_properties;
     }
     
@@ -165,6 +180,19 @@ role VRPipe::SchemaLabelRole {
             return $self->{changed_properties};
         }
         return;
+    }
+    
+    method remove_property (Str $property) {
+        my %uniques = map { $_ => 1 } $self->unique_properties();
+        my $class = $self->class();
+        if (exists $uniques{$property}) {
+            $self->throw("Property '$property' supplied, but that's unique for schema $class and can't be changed");
+        }
+        
+        $self->block_until_locked();
+        $graph->node_remove_property($self, $property);
+        $self->_maintain_property_history(1);
+        $self->unlock();
     }
     
     # returns a list of hashrefs with keys group_uuid, timestamp, properties,
@@ -184,15 +212,27 @@ role VRPipe::SchemaLabelRole {
         my @nodes = $graph->related_nodes($self, $outgoing ? (outgoing => $outgoing) : (), $incoming ? (incoming => $incoming) : (), $undirected ? (undirected => $undirected) : ());
         
         # bless them into the correct classes
+        $created_namespaces{ $self->{namespace} } = 1;
         foreach my $node (@nodes) {
-            bless $node, 'VRPipe::Schema::' . $node->{namespace} . '::' . $node->{label};
+            my $namespace = $node->{namespace};
+            bless $node, 'VRPipe::Schema::' . $namespace . '::' . $node->{label};
+            
+            # load the associated schema so that methods can be called on it
+            unless (exists $created_namespaces{$namespace}) {
+                VRPipe::Schema->create($namespace);
+                $created_namespaces{$namespace} = 1;
+            }
         }
         
         return @nodes;
     }
     
-    method relate_to (HashRef|Object $node!, $type!, Bool :$selfish = 0, Bool :$replace = 0) {
+    method relate_to (HashRef|Object $node!, Str $type!, Bool :$selfish = 0, Bool :$replace = 0) {
         $graph->relate($self, $node, type => $type, selfish => $selfish, replace => $replace);
+    }
+    
+    method divorce_from (HashRef|Object $node!, Str $type?) {
+        $graph->divorce($self, $node, $type ? (type => $type) : ());
     }
 }
 

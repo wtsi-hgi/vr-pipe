@@ -208,14 +208,16 @@ class VRPipe::PipelineSetup extends VRPipe::Persistent {
         # don't trigger while datasource is updating, wait until we get the
         # lock
         my $datasource = $self->datasource;
-        $datasource->block_until_locked;
-        $self->reselect_values_from_db;
-        if ($self->datasource->id != $datasource->id) {
-            # (user might have changed the datasource while we were waiting)
-            $datasource->unlock;
-            return;
+        unless ($dataelement) {
+            $datasource->block_until_locked;
+            $self->reselect_values_from_db;
+            if ($self->datasource->id != $datasource->id) {
+                # (user might have changed the datasource while we were waiting)
+                $datasource->unlock;
+                return;
+            }
+            $datasource->maintain_lock;
         }
-        $datasource->maintain_lock;
         
         my $output_root = $self->output_root;
         $self->make_path($output_root);
@@ -232,7 +234,7 @@ class VRPipe::PipelineSetup extends VRPipe::Persistent {
                 }
             }
             if (keys %from_steps) {
-                $step_inputs{ $adaptor->to_step } = [keys %from_steps];
+                $step_inputs{ $adaptor->to_step } = [sort { $a <=> $b } keys %from_steps];
             }
         }
         
@@ -625,7 +627,6 @@ class VRPipe::PipelineSetup extends VRPipe::Persistent {
                     $redos++;
                     if ($redos <= $max_redos) {
                         $self->debug("redo");
-                        $estate->unlock;
                         redo ESTATE;
                     }
                     else {
@@ -640,7 +641,7 @@ class VRPipe::PipelineSetup extends VRPipe::Persistent {
             }
         }
         
-        $datasource->unlock;
+        $datasource->unlock unless $dataelement;
         
         $self->debug("trigger returning");
         return $error_message;
@@ -648,6 +649,13 @@ class VRPipe::PipelineSetup extends VRPipe::Persistent {
     
     method _complete_state (VRPipe::Step $step, VRPipe::StepState $state, Int $step_number, VRPipe::Pipeline $pipeline, VRPipe::DataElementState $estate) {
         my $transaction = sub {
+            my $completed_steps = $estate->completed_steps;
+            if ($step_number > $completed_steps) {
+                $estate->completed_steps($step_number);
+                $estate->update;
+                $self->log_event("PipelineSetup->trigger found the DataElementState has now completed $step_number steps", dataelement => $estate->dataelement->id);
+            }
+            
             unless ($state->complete) {
                 $self->log_event("PipelineSetup->trigger will now complete the StepState", dataelement => $estate->dataelement->id, stepstate => $state->id);
                 
@@ -670,13 +678,6 @@ class VRPipe::PipelineSetup extends VRPipe::Persistent {
                 
                 $state->complete(1);
                 $state->update;
-            }
-            
-            my $completed_steps = $estate->completed_steps;
-            if ($step_number > $completed_steps) {
-                $estate->completed_steps($step_number);
-                $estate->update;
-                $self->log_event("PipelineSetup->trigger found the DataElementState has now completed $step_number steps", dataelement => $estate->dataelement->id);
             }
         };
         $self->do_transaction($transaction, "Failed to complete state for StepState " . $state->id);
@@ -705,6 +706,13 @@ class VRPipe::PipelineSetup extends VRPipe::Persistent {
             if ($record_stack) {
                 warn $self->stack_trace, "\n";
             }
+        }
+        
+        # the msg can't be longer than 65535 chars or it will fail to be stored
+        # in the db. And actually, if its longer than a 1000 it's crazy, so we
+        # truncate
+        if (length($msg) > 1000) {
+            $msg = substr($msg, 0, 1000) . ' ...[truncated]...';
         }
         
         return VRPipe::PipelineSetupLog->create(

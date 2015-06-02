@@ -37,9 +37,8 @@ this program. If not, see L<http://www.gnu.org/licenses/>.
 
 use VRPipe::Base;
 
-class VRPipe::DataSource::vrpipe with VRPipe::DataSourceRole {
+class VRPipe::DataSource::vrpipe with VRPipe::DataSourceVRPipeRole {
     use Digest::MD5 qw(md5_hex);
-    use VRPipe::Schema;
     
     method description {
         return "Use files created by VRPipe pipelines as a datasource.";
@@ -51,13 +50,13 @@ class VRPipe::DataSource::vrpipe with VRPipe::DataSourceRole {
     
     method method_description (Str $method) {
         if ($method eq 'all') {
-            return "Each element will consist of the output files from the vrpipe datasource. If the maintain_element_grouping option is set to 1 (default), then all files produced by a dataelement in the source will be grouped into a dataelement. Otherwise, each source file will be it's own dataelement. The filter option is a string of the form 'metadata_key#regex'; multiple filters can be separated by commas (and neither the keys nor regexs can include hashes or commas). If the filter_after_grouping option is set (the default), grouping based on metadata will be performed first and then the filter applied with it only being necessary for one file in the group to pass the filter by having metadata matching the regex. If the filter_after_grouping option is not set, only files which match the regex will be included and grouped based on their metadata. The graph_filter option is like the filter option, except instead of being a regex against metadata stored directly on the file, you look for an exact match to a property of a node that the file's node is descended from, specifying 'namespace#label#propery#value', eg. VRTrack#Sample#qc_withdrawn#0 to only have files related to samples that have not been qc withdrawn. The include_in_all_elements option takes values in the same format as source and results in each resulting element also having the output files of the setup(s) defined here.";
+            return "Each element will consist of the output files from the vrpipe datasource. If the maintain_element_grouping option is set to 1 (default), then all files produced by a dataelement in the source will be grouped into a dataelement. Otherwise, each source file will be it's own dataelement. The filter option is a string of the form 'metadata_key#regex'; multiple filters can be separated by commas (and neither the keys nor regexs can include hashes or commas). If the filter_after_grouping option is set (the default) and maintain_element_grouping is in use, element grouping will be performed first and then the filter applied with it only being necessary for one file in the group to pass the filter. If the filter_after_grouping option is not set, only files which match the regex will be included and grouped with others from the same element. The graph_filter option is like the filter option, except instead of being a regex against metadata stored directly on the file, you look for an exact match to a property of a node that the file's node is descended from, specifying 'namespace#label#propery#value', eg. VRTrack#Sample#qc_failed#0 to only have files related to samples that have not been qc failed. The include_in_all_elements option takes values in the same format as source and results in each resulting element also having the output files of the setup(s) defined here.";
         }
         elsif ($method eq 'group_by_metadata') {
-            return "Files from the source will be grouped according to their metadata keys. Requires the metadata_keys option which is a '|' separated list of metadata keys by which dataelements will be grouped. e.g. metadata_keys => 'sample|platform|library' will groups all elements with the same sample, platform and library into one dataelement. The filter option is a string of the form 'metadata_key#regex'; multiple filters can be separated by commas (and neither the keys nor regexs can include hashes or commas). If the filter_after_grouping option is set (the default), grouping based on metadata will be performed first and then the filter applied with it only being necessary for one file in the group to pass the filter by having metadata matching the regex. If the filter_after_grouping option is not set, only files which match the regex will be included and grouped based on their metadata. The graph_filter option is like the filter option, except instead of being a regex against metadata stored directly on the file, you look for an exact match to a property of a node that the file's node is descended from, specifying 'namespace#label#propery#value', eg. VRTrack#Sample#qc_withdrawn#0 to only have files related to samples that have not been qc withdrawn. The include_in_all_elements option takes values in the same format as source and results in each resulting element also having the output files of the setup(s) defined here.";
+            return "Files from the source will be grouped according to their metadata keys. Requires the metadata_keys option which is a '|' separated list of metadata keys by which dataelements will be grouped. e.g. metadata_keys => 'sample|platform|library' will groups all elements with the same sample, platform and library into one dataelement. The filter option is a string of the form 'metadata_key#regex'; multiple filters can be separated by commas (and neither the keys nor regexs can include hashes or commas). If the filter_after_grouping option is set (the default), grouping based on metadata will be performed first and then the filter applied with it only being necessary for one file in the group to pass the filter by having metadata matching the regex. If the filter_after_grouping option is not set, only files which match the regex will be included and grouped based on their metadata. The graph_filter option is like the filter option, except instead of being a regex against metadata stored directly on the file, you look for an exact match to a property of a node that the file's node is descended from, specifying 'namespace#label#propery#value', eg. VRTrack#Sample#qc_failed#0 to only have files related to samples that have not been qc failed. The include_in_all_elements option takes values in the same format as source and results in each resulting element also having the output files of the setup(s) defined here.";
         }
         elsif ($method eq 'group_all') {
-            return "All output files in the vrpipe datasource will be grouped into a single element. The filter option is a string of the form 'metadata_key#regex' which will select only files with metadata matching the regex; multiple filters can be separated by commas (and neither the keys nor regexs can include hashes or commas). The graph_filter option is like the filter option, except instead of being a regex against metadata stored directly on the file, you look for an exact match to a property of a node that the file's node is descended from, specifying 'namespace#label#propery#value', eg. VRTrack#Sample#qc_withdrawn#0 to only have files related to samples that have not been qc withdrawn.";
+            return "All output files in the vrpipe datasource will be grouped into a single element. The filter option is a string of the form 'metadata_key#regex' which will select only files with metadata matching the regex; multiple filters can be separated by commas (and neither the keys nor regexs can include hashes or commas). The graph_filter option is like the filter option, except instead of being a regex against metadata stored directly on the file, you look for an exact match to a property of a node that the file's node is descended from, specifying 'namespace#label#propery#value', eg. VRTrack#Sample#qc_failed#0 to only have files related to samples that have not been qc failed.";
         }
         
         return '';
@@ -76,8 +75,6 @@ class VRPipe::DataSource::vrpipe with VRPipe::DataSourceRole {
         builder => '_build_iiae_sources',
         lazy    => 1
     );
-    
-    my %file_filter_cache;
     
     method _build_vrpipe_sources (Maybe[Str] $source?) {
         my @sources = split(/\|/, $source || $self->source);
@@ -197,7 +194,7 @@ class VRPipe::DataSource::vrpipe with VRPipe::DataSourceRole {
         
         # create the elements
         my @element_args;
-        my %result_to_linkargs;
+        $self->{result_to_linkargs} = {};
         foreach my $result (@{ $self->_all_results(%args, complete_elements => 1) }) {
             if ($filter || $graph_filter) {
                 next unless $result->{pass_filter};
@@ -207,16 +204,27 @@ class VRPipe::DataSource::vrpipe with VRPipe::DataSourceRole {
                 $res->{lane}  = $result->{result}->{lane}  if (exists $result->{result}->{lane});
                 $res->{group} = $result->{result}->{group} if (exists $result->{result}->{group});
             }
-            push @element_args, { datasource => $self->_datasource_id, result => $res };
             
-            $result_to_linkargs{ _res_to_str($res) } = { pipelinesetup => $result->{parent}->{setup_id}, parent => $result->{parent}->{element_id} };
+            # in order to later lookup which parent element created which
+            # element, we convert $res to a string representing the files and
+            # keyvals in the element we want to create, and use that as the
+            # linking key. However we need to cope with a child class overriding
+            # _create_elements() and adding keyvals to $res, which would
+            # invalidate the lookup. To get around this, we also temporarily
+            # store the lookup in the element_args and adjust things if
+            # necessary in our own override of _create_elements(). We do have to
+            # hope that no child class deletes our lookup key from the element
+            # args!
+            my $res_to_str = $self->_res_to_str($res);
+            push @element_args, { datasource => $self->_datasource_id, result => $res, lookup => $res_to_str };
+            $self->{result_to_linkargs}->{$res_to_str} = { pipelinesetup => $result->{parent}->{setup_id}, parent => $result->{parent}->{element_id} };
         }
         $self->_create_elements(\@element_args);
         
         # create corresponding dataelementlinks
         my @link_args;
         my %result_to_eid = map { $_->[0] . '|' . $_->[1] => $_->[2] } @{ VRPipe::DataElement->get_column_values(['filelist', 'keyvallist', 'id'], { datasource => $self->_datasource_id, withdrawn => 0 }) || [] };
-        while (my ($res, $linkargs) = each %result_to_linkargs) {
+        while (my ($res, $linkargs) = each %{ $self->{result_to_linkargs} }) {
             my $child = $result_to_eid{$res} || $self->throw("No DataElement was created for result $res?");
             push(@link_args, { %$linkargs, child => $child });
             
@@ -224,6 +232,8 @@ class VRPipe::DataSource::vrpipe with VRPipe::DataSourceRole {
                 push(@link_args, { pipelinesetup => $parent->{setup_id}, parent => $parent->{element_id}, child => $child });
             }
         }
+        delete $self->{result_to_linkargs};
+        
         VRPipe::DataElementLink->bulk_create_or_update(@link_args);
     }
     
@@ -244,126 +254,14 @@ class VRPipe::DataSource::vrpipe with VRPipe::DataSourceRole {
         $self->_create_elements([{ datasource => $self->_datasource_id, result => { paths => \@paths }, withdrawn => 0 }]);
         
         # create corresponding dataelementlinks
-        my $child = VRPipe::DataElement->get(datasource => $self->_datasource_id, result => { paths => \@paths });
+        my @children = VRPipe::DataElement->search({ datasource => $self->_datasource_id, withdrawn => 0 });
         my @link_args;
         foreach my $parent (@parents) {
-            push(@link_args, { pipelinesetup => $parent->{setup_id}, parent => $parent->{element_id}, child => $child->id });
+            foreach my $child (@children) {
+                push(@link_args, { pipelinesetup => $parent->{setup_id}, parent => $parent->{element_id}, child => $child->id });
+            }
         }
         VRPipe::DataElementLink->bulk_create_or_update(@link_args);
-    }
-    
-    sub _res_to_str {
-        my $res = shift;
-        my $args = { result => $res };
-        VRPipe::DataElement->_convert_result($args);
-        return $args->{filelist} . '|' . $args->{keyvallist};
-    }
-    
-    method _parse_filters (Maybe[Str] $filter?, Maybe[Str] $graph_filter?) {
-        my @krs;
-        if ($filter) {
-            foreach my $kr (split(',', $filter)) {
-                my ($key, $regex) = split('#', $kr);
-                $self->throw("Option 'filter' for vrpipe datasource was not properly formed\n") unless ($key && $regex);
-                push(@krs, [$key, $regex]);
-            }
-            $self->throw("Option 'filter' for vrpipe datasource was not properly formed\n") unless @krs;
-        }
-        my (@gfs, $vrpipe_graph_schema, $graph);
-        if ($graph_filter) {
-            foreach my $gf (split(',', $graph_filter)) {
-                my ($namespace, $label, $prop, $value) = split('#', $gf);
-                $self->throw("Option 'graph_filter' for vrpipe datasource was not properly formed\n") unless ($namespace && $label && $prop && defined($value));
-                push(@gfs, [$namespace, $label, $prop, $value]);
-            }
-            $self->throw("Option 'graph_filter' for vrpipe datasource was not properly formed\n") unless @gfs;
-            $vrpipe_graph_schema = VRPipe::Schema->create('VRPipe');
-            $graph               = $vrpipe_graph_schema->graph();
-        }
-        return (\@krs, \@gfs, $vrpipe_graph_schema, $graph);
-    }
-    
-    method _file_filter (VRPipe::File $file, Bool $filter_after_grouping, Maybe[ArrayRef] $krs?, Maybe[ArrayRef] $gfs?, $vrpipe_graph_schema?, $graph?) {
-        # to avoid doing this twice, once during _element_state_status_checksum
-        # and then again during _all_results, _element_state_status_checksum()
-        # caches our result and _all_results() clears the cache before it returns
-        my $file_id = $file->id;
-        if (exists $file_filter_cache{$file_id}) {
-            return $file_filter_cache{$file_id};
-        }
-        
-        my $meta        = $file->metadata;
-        my $pass_filter = 0;
-        if ($krs && @$krs) {
-            # if "filter_after_grouping => 0", we filter before grouping
-            # by skipping files which don't match the regex or don't
-            # have the required metadata
-            my $passes = 0;
-            foreach my $kr (@$krs) {
-                my ($key, $regex) = @$kr;
-                if (defined $meta->{$key}) {
-                    my $this_passed = $meta->{$key} =~ m/$regex/ ? 1 : 0;
-                    return if (!$filter_after_grouping && !$this_passed);
-                    $passes += $this_passed;
-                }
-                else {
-                    return unless $filter_after_grouping;
-                }
-            }
-            $pass_filter = $passes == @$krs ? 1 : 0;
-        }
-        
-        if ($gfs && @$gfs && (($krs && @$krs) ? $pass_filter : 1)) {
-            my $file_node = $vrpipe_graph_schema->get('File', { path => $file->path->stringify });
-            my $passes = 0;
-            foreach my $gf (@$gfs) {
-                my ($namespace, $label, $prop, $value) = @$gf;
-                my @nodes = $graph->related_nodes(
-                    $file_node,
-                    incoming => {
-                        namespace => $namespace,
-                        label     => $label,
-                        max_depth => 20,
-                        $value ? (properties => { $prop => $value }) : ()
-                    }
-                );
-                #*** there are definitely optimisations
-                # that can be made here: we can get all file nodes at once, and
-                # we can check all property#value pairs on the same label at
-                # once.
-                if (@nodes) {
-                    unless ($value) {
-                        # we didn't restrict nodes to those that have $prop set
-                        # so that we can now test all the nodes to see if they
-                        # either have $prop set to 0, or don't have $prop set at
-                        # all
-                        my $ok = 0;
-                        foreach my $node (@nodes) {
-                            $ok++ unless $graph->node_property($node, $prop);
-                        }
-                        
-                        # we reverse the normal logic and say all nodes must
-                        # have a false/unset value, instead of only 1 node
-                        # having a true value
-                        if ($ok == @nodes) {
-                            $passes++;
-                        }
-                        else {
-                            return unless $filter_after_grouping;
-                        }
-                    }
-                    else {
-                        $passes++;
-                    }
-                }
-                else {
-                    return unless $filter_after_grouping;
-                }
-            }
-            $pass_filter = $passes == @$gfs ? 1 : 0;
-        }
-        
-        return $pass_filter;
     }
     
     method _all_results (Defined :$handle!, Bool :$maintain_element_grouping = 1, Str :$filter?, Str :$graph_filter, HashRef :$sources?, Bool :$complete_elements = 1, Bool :$complete_all = 0, Bool :$filter_after_grouping = 1) {
@@ -453,7 +351,7 @@ class VRPipe::DataSource::vrpipe with VRPipe::DataSourceRole {
         }
         
         # empty the cache before the next possible check
-        %file_filter_cache = ();
+        $self->_clear_file_filter_cache();
         
         return \@output_files;
     }
@@ -519,19 +417,27 @@ class VRPipe::DataSource::vrpipe with VRPipe::DataSourceRole {
         
         # we also need to make a dataelementlink for each dataelement we just
         # made
+        my %group_to_eids;
+        foreach my $de (VRPipe::DataElement->search({ datasource => $self->_datasource_id, withdrawn => 0 }, { prefetch => 'keyvallist' })) {
+            my $group = $de->keyvallist->as_hashref->{group};
+            $group_to_eids{$group}->{ $de->id } = 1;
+        }
+        
         my @link_args;
-        my %group_to_eid = map { VRPipe::KeyValList->get(id => $_->[0])->as_hashref->{group} => $_->[1] } @{ VRPipe::DataElement->get_column_values(['keyvallist', 'id'], { datasource => $self->_datasource_id, withdrawn => 0 }) || [] };
         foreach my $group (sort keys %{$group_hash}) {
             my $hash_ref = $group_hash->{$group};
             if ($filter) {
                 next unless $hash_ref->{pass_filter};
             }
             
-            my $child_id = $group_to_eid{$group} || $self->throw("No DataElement was created for group $group?");
             my %parents = map { $_->{element_id} => $_ } @{ $hash_ref->{parents} };
-            foreach my $key (sort keys %parents) {
-                my $parent = $parents{$key};
-                push(@link_args, { pipelinesetup => $parent->{setup_id}, parent => $parent->{element_id}, child => $child_id });
+            
+            my $child_ids = $group_to_eids{$group} || $self->throw("No DataElement was created for group $group?");
+            foreach my $child_id (keys %$child_ids) {
+                foreach my $key (sort keys %parents) {
+                    my $parent = $parents{$key};
+                    push(@link_args, { pipelinesetup => $parent->{setup_id}, parent => $parent->{element_id}, child => $child_id });
+                }
             }
         }
         VRPipe::DataElementLink->bulk_create_or_update(@link_args);
@@ -553,7 +459,7 @@ class VRPipe::DataSource::vrpipe with VRPipe::DataSourceRole {
         my $vrpipe_sources        = $self->vrpipe_sources;
         my $iiae_sources          = $self->include_in_all_elements_sources;
         my $options               = $self->options;
-        my $filter_after_grouping = $options->{filter_after_grouping};
+        my $filter_after_grouping = defined $options->{filter_after_grouping} ? $options->{filter_after_grouping} : ($self->method eq 'group_all' ? 0 : 1);
         my $filter                = $options->{filter};
         my $graph_filter          = $options->{graph_filter};
         my ($krs, $gfs, $vrpipe_graph_schema, $graph) = $self->_parse_filters($filter, $graph_filter);
@@ -575,7 +481,6 @@ class VRPipe::DataSource::vrpipe with VRPipe::DataSourceRole {
                     
                     foreach my $file (@$files) {
                         my $pass = $self->_file_filter($file, $filter_after_grouping, $krs, $gfs, $vrpipe_graph_schema, $graph);
-                        $file_filter_cache{ $file->id } = $pass;
                         $pass_filter += $pass if $pass;
                     }
                 }

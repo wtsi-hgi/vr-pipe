@@ -136,16 +136,13 @@ class VRPipe::Steps::samtools_bam_stats with VRPipe::StepRole {
         
         $stats_file->update_stats_from_disc(retries => 3);
         if ($stats_file->s) {
-            # parse the stats file with the old bamcheck parser
-            my $parser = VRPipe::Parser->create('bamcheck', { file => $stats_file });
             $stats_file->disconnect;
-            
             # we'll store results in the graph database under the VRTrack schema
             my $vrtrack = VRPipe::Schema->create('VRTrack');
             
             # before adding graph node for the stats file, make sure we have
             # nodes for the whole hierarchy
-            $parser = VRPipe::Parser->create('bam', { file => $bam_file });
+            my $parser  = VRPipe::Parser->create('bam', { file => $bam_file });
             my %rg_info = $parser->readgroup_info();
             my @rgs     = keys %rg_info;
             my @lanes;
@@ -208,17 +205,33 @@ class VRPipe::Steps::samtools_bam_stats with VRPipe::StepRole {
                         # store reads metadata on the file for compatibility
                         # with old steps
                         if ($1 eq 'raw total sequences') {
-                            $bam_file->add_metadata({ reads => $2 });
+                            my $stats_reads = $2;
+                            
+                            # if in targets mode we can't use this and will
+                            # have to call samtools view -c if we don't
+                            # already have reads metadata set
+                            if ($cmd_line =~ /\s-t /) {
+                                if (!$bam_file->meta_value('reads')) {
+                                    my $actual_reads = $bam_file->num_records;
+                                    $bam_file->add_metadata({ reads => $actual_reads });
+                                }
+                                
+                                $stats{'raw total sequences'}      = $bam_file->meta_value('reads');
+                                $stats{'targeted total sequences'} = $stats_reads;
+                            }
+                            else {
+                                $bam_file->add_metadata({ reads => $stats_reads });
+                            }
                         }
                     }
                 }
                 $stats_file->close;
                 
                 my $mode = 'normal';
-                if ($cmd_line =~ /-d/) {
+                if ($cmd_line =~ /\s-d\s/) {
                     $mode = 'rmdup';
                 }
-                elsif ($cmd_line =~ /-t/) {
+                elsif ($cmd_line =~ /\s-t\s/) {
                     $mode = 'targeted';
                 }
                 
