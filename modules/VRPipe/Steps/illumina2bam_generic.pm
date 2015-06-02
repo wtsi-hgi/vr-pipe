@@ -51,14 +51,14 @@ class VRPipe::Steps::illumina2bam_generic extends VRPipe::Steps::java {
         is      => 'ro',
         isa     => 'Str',
         lazy    => 1,
-        builder => 'determine_picard_version'
+        builder => 'determine_illumina2bam_version'
     );
     
     method determine_illumina2bam_version (ClassName|Object $self:) {
         my $illumina2bam_path = $self->illumina2bam_path->stringify;
         unless (defined $ILLUMINA2BAM_VERSIONS{$illumina2bam_path}) {
             my $version = 0;
-            opendir(my $dh, $illumina2bam_path) || $self->throw("Could not open picard directory $illumina2bam_path");
+            opendir(my $dh, $illumina2bam_path) || $self->throw("Could not open illumina2bam directory $illumina2bam_path");
             foreach (readdir $dh) {
                 if (/^Illumina2bam-([\d\.]+)\.jar/) {
                     $version = $1;
