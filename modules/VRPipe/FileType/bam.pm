@@ -42,6 +42,7 @@ use VRPipe::Base;
 
 class VRPipe::FileType::bam extends VRPipe::FileType::bin {
     our $correct_magic = [qw(037 213 010 004 000 000 000 000 000 377 006 000 102 103 002 000)];
+    our $alt_magic = [qw(037 213 010 004 000 000 000 000 004 377 006 000 102 103 002 000)]; #fast compressed bam
     our $u_magic       = [qw(102 101 115 001)];                                                # bam1; the rest is variable
     
     my $samtools_exe = file($ENV{SAMTOOLS}, 'samtools');
@@ -50,7 +51,9 @@ class VRPipe::FileType::bam extends VRPipe::FileType::bin {
         $self->$orig || return 0;
         my $file = $self->file;
         my $ok = $self->check_magic($file, $correct_magic);
-        
+        unless ($ok) {
+            $ok = $self->check_magic($file, $alt_magic);
+        }
         unless ($ok) {
             # it might be an uncompressed bam
             $self->check_magic($file, $u_magic) || return 0;
@@ -76,7 +79,7 @@ class VRPipe::FileType::bam extends VRPipe::FileType::bin {
     method num_records {
         my $path    = $self->file;
         my $sam     = -T $path ? 'S' : '';
-        my $records = `$samtools_exe view -${sam}c -F 0x900 $path`;
+        my $records = `$samtools_exe view -${sam}c  $path`;
         ($records) = $records =~ /^(\d+)/m;
         $records ||= 0;
         return $records;
