@@ -74,7 +74,7 @@ class VRPipe::Pipelines::bam_mapping_with_bwa_mem_hgi_via_fastq with VRPipe::Pip
             { from_step => 8, to_step => 9, from_key => 'fixed_bam_files', to_key => 'bam_files' },
             { from_step => 9, to_step => 10, from_key => 'merged_lane_bams', to_key => 'aligned_bam_files' },
             { from_step => 10, to_step => 11, from_key => 'merge_align_bam_files', to_key => 'bam_files' },
-            { from_step => 11, to_step => 12, from_key => 'sorted_bam_files', to_key => 'bam_files' },
+            { from_step => 11, to_step => 12, from_key => 'coord_sorted_bam_files', to_key => 'bam_files' },
             { from_step => 12, to_step => 13, from_key => 'bq_bam_files', to_key => 'bam_files' },
         );
     }

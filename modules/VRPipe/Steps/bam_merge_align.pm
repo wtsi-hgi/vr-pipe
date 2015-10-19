@@ -72,7 +72,9 @@ class VRPipe::Steps::bam_merge_align extends VRPipe::Steps::illumina2bam_generic
                 my $bam_base     = $bam->basename;
                 my $bam_meta     = $bam->metadata;
                 my $markdup_base = $bam_base;
-                $markdup_base =~ s/bam$/merge_align.bam/;
+                $bam_meta->{reads} = $aligned_bam->metadata->{reads};
+                $bam_meta->{bases} = $aligned_bam->metadata->{bases};
+                 $markdup_base =~ s/bam$/merge_align.bam/;
                 my $markdup_bam_file = $self->output_file(
                     output_key => 'merge_align_bam_files',
                     basename   => $markdup_base,
