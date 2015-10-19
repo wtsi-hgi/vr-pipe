@@ -1,3 +1,78 @@
+0.213   Critical locking overhaul resolves vrpipe-server not functioning
+        correctly.
+        Fixed vrpipe-output so that it works again.
+        Fixed all vrpipe-* scripts and processes to not spawn extraneous redis
+        servers; now only vrpipe-server will spawn 1 as needed.
+        bcftools_cnv step fixed to get true sample name from vcf.
+        bcf_to_vcf step improved so that $bcftools can be replaced by
+        bcftools_exe in post_calling_vcftools option.
+        bam_import_from_irods_and_index step fixed so that it can be installed.
+0.212   Critical speed fix for steps that take datasource input with multiple
+        types and many files.
+        cram_index and bam_index steps now die if they can't delete an out-of-
+        date index file.
+        Overhauled internal locking mechanism should result in a slightly faster
+        system with fewer, shorter-lived stalls.
+        (Sanger specific:) irods warehouse datasource and npg_cram_stats_parser
+        step now default to getting F0xB00 stats files instead of F0x900. Also,
+        the correct studies according to warehouse are related to the input
+        file, ignoring study information stored in irods metadata. irods
+        datasource no longer falls over if given a query file with blank lines.
+        GATK steps can now use a gatk_key to turn off phoning home, enabled by
+        default if environment variable GATK_KEY is set.
+        New gatk_genotype_gvcfs pipeline which can do the calling to chrom vcf
+        in one setup (using both datasource and step chunking).
+        New pipelines: bam_calling_with_gatk_haplotype_caller,
+        bam_calling_with_mpileup_via_bcf, bam_import_from_irods_and_index,
+        bam_indel_realignment_and_bqsr, bam_merge_and_mark_duplicates,
+        bam_merge_and_streaming_mark_duplicates,
+        gvcf_calling_one_combine_with_gatk_haplotype_caller,
+        gvcf_calling_two_combine_with_gatk_haplotype_caller,
+        gvcf_calling_with_gatk_haplotype_caller,
+        sample_bam_remapping_with_bwa_mem
+        Deleted pipelines (some of them renamed to new ones above):
+        sample_gvcf_via_bcf_with_mpileup,
+        sample_gvcf_with_gatk_haplotype_caller,
+        sample_indel_realignment_and_bqsr,
+        sample_irods_import_and_mark_duplicates,
+        sample_irods_import_and_streaming_mark_duplicates
+0.211   bam_improvement_gatk_v2 pipeline fixed to work again.
+        irods_sample_import pipeline renamed as
+        sample_irods_import_and_mark_duplicates.
+        bam_reheader step fixed to work when reads metadata on input file is
+        wrong.
+        bcftools_cnv step fixed to always remove invalid plot<-sample
+        relationships.
+0.210   Various bam-outputting steps are now more tolerant of input file
+        reads metadata being wrong.
+        bcftools_cnv step fixed to properly relate all plots to the sample node.
+        New sample_indel_realignment_and_bqsr pipeline.
+        Critical speed fix for vrtrack_update_mapstats step.
+        Fixed polysomy step so the output files have the correct sample name
+        metadata.
+0.209   Minor fix for vcf_merge_different_samples_control_aware step when the
+        samples have no control.
+        Fix for the polysomy step when the vcf has duplicate samples.
+        Fixed step post processing when an output file needs permission changes
+        and wasn't output by anything.
+0.208   Critical speed fix for graph_filter queries in datasources (allowing
+        those datasources to work now).
+        Further critical speed fixes for processing all pipelines, allowing them
+        to proceed.
+0.207   Critical speed fix for processing all pipelines (especially evident when
+        unstalling a stalled/started-from-scratch setup)
+        vrpipe-setup fixed to allow creating new setups again.
+        bwa_mem_to_bam fixed to solve conflict issues with samtools sort.
+        Various steps in the polysomy_cnv_caller pipeline have been fixed to
+        work as intended.
+0.206   Proper fix for v0.205.
+0.205   Fix for hipsci QC to handle _CTRL appended to sample names in files.
+0.204   CNV and Pluritest-related steps now store their results properly in the
+        graph database against sample and donor nodes.
+        vrpipe-setup now allows reactivate/deactivate of multiple setups.
+        New sample_gvcf_via_bcf_with_mpileup pipeline.
+        New sample_gvcf_with_gatk_haplotype_caller pipeline.
+        vrtrack qc website donor view now allows setting donor sample qc status.
 0.203   Fixed vrpipe-setup to handle new default options in the irods
         datasource correctly.
 0.202   npg_cram_stats_parser step now stores md5_of_ref_seq_md5s

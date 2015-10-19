@@ -42,7 +42,7 @@ this program. If not, see L<http://www.gnu.org/licenses/>.
 
 use VRPipe::Base;
 
-class VRPipe::StepOption extends VRPipe::Persistent {
+class VRPipe::StepOption extends VRPipe::PersistentLocklessCreate {
     has 'description' => (
         is     => 'rw',
         isa    => Varchar [255],

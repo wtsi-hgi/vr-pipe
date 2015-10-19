@@ -3,18 +3,34 @@ use strict;
 use warnings;
 use Path::Class;
 use Sys::Hostname;
+use Parallel::ForkManager;
 
 BEGIN {
-    use Test::Most tests => 20;
+    use Test::Most tests => 21;
     use VRPipeTest;
     
     use_ok('VRPipe::Scheduler');
 }
 
-ok my $scheduler = VRPipe::Scheduler->create, 'able to create a VRPipe::Scheduler based on configured default';
+my $fm     = Parallel::ForkManager->new(8);
+my $num_ok = 0;
+$fm->run_on_finish(
+    sub {
+        my ($pid, $ok) = @_;
+        $num_ok++ if $ok;
+    }
+);
+for (1 .. 8) {
+    $fm->start and next;
+    my $scheduler = VRPipe::Scheduler->create;
+    my $ok = defined $scheduler && $scheduler->can('type');
+    $fm->finish($ok);
+}
+$fm->wait_all_children;
+is $num_ok, 8, 'able to create a VRPipe::Scheduler based on configured default, 8 times in parallel';
 
 # local
-ok $scheduler = VRPipe::Scheduler->create(type => 'local'), q[able to get the lsf scheduler using get(type => 'local')];
+ok my $scheduler = VRPipe::Scheduler->create(type => 'local'), q[able to get the lsf scheduler using get(type => 'local')];
 is $scheduler->type, 'local', 'the type really is local';
 
 my $requirements = VRPipe::Requirements->create(memory => 1, time => 1);
@@ -25,11 +41,12 @@ ok $scheduler = VRPipe::Scheduler->create(type => 'lsf'), q[able to get the lsf 
 is $scheduler->type, 'lsf', 'the type really is lsf';
 SKIP: {
     my $host = hostname();
-    skip "author-only lsf tests", 5 unless $host eq 'vr-2-2-02';
+    skip "author-only lsf tests", 6 unless $host eq 'vr-2-2-02';
     
     is $scheduler->determine_queue($requirements), 'normal', 'determine_queue() gave normal queue for 10MB and 1hr';
     $requirements = VRPipe::Requirements->create(memory => 1, time => 300);
     is $scheduler->determine_queue($requirements), 'normal', 'determine_queue() gave normal queue for 10MB and 5mins';
+    is $scheduler->determine_queue($requirements, 10), 'yesterday', 'determine_queue() with a global_max of 10 gave yesterday queue for 10MB and 5mins';
     $requirements = VRPipe::Requirements->create(memory => 37000, time => 1);
     is $scheduler->determine_queue($requirements), 'normal', 'determine_queue() gave test queue for 37GB and 1hr'; # used to be 'test' before our memory limits were removed from all queues
     $requirements = VRPipe::Requirements->create(memory => 1, time => 13);

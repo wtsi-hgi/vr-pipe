@@ -26,7 +26,7 @@ Sendu Bala <sb10@sanger.ac.uk>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2011 Genome Research Limited.
+Copyright (c) 2011,2015 Genome Research Limited.
 
 This file is part of VRPipe.
 
@@ -46,10 +46,10 @@ this program. If not, see L<http://www.gnu.org/licenses/>.
 
 use VRPipe::Base;
 
-class VRPipe::Requirements extends VRPipe::Persistent {
+class VRPipe::Requirements extends VRPipe::PersistentLocklessCreate {
     has 'memory' => (
         is     => 'rw',
-        isa    => IntSQL [5],
+        isa    => IntSQL [6],
         traits => ['VRPipe::Persistent::Attributes'],
         is_key => 1
     );
@@ -88,6 +88,10 @@ class VRPipe::Requirements extends VRPipe::Persistent {
         allow_key_to_default => 1
     );
     
+    # custom requirements are a hashref so that you can specify
+    # custom requirements strings for specific schedulers, e.g.
+    # custom => { lsf => '-R "avx"'} will then append the AVX
+    # requirement to LSF scheduled jobs
     has 'custom' => (
         is                   => 'rw',
         isa                  => 'HashRef',

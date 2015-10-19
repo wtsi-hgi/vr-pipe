@@ -74,7 +74,7 @@ class VRPipe::Steps::plot_bamstats with VRPipe::StepRole {
                 my $vrtrack = VRPipe::Schema->create('VRTrack');
                 my $vrstats_file = $vrtrack->get_file($s_file->protocolless_path, $s_file->protocol);
                 $self->throw($s_file->path . " was not in the graph database") unless $vrstats_file;
-                my ($vr_lane) = $vrstats_file->related(incoming => { namespace => 'VRTrack', label => 'Lane', max_depth => 5 });
+                my $vr_lane = $vrstats_file->closest('VRTrack', 'Lane', direction => 'incoming');
                 my ($vr_stats) = $vrstats_file->related(outgoing => { type => 'summary_stats' });
                 my $prefix = $vr_lane->unique() || $s_file->basename;
                 
@@ -115,13 +115,14 @@ class VRPipe::Steps::plot_bamstats with VRPipe::StepRole {
                 $ofile = $self->output_file(output_key => 'bamstats_plots', basename => $prefix . '-coverage.png', type => 'bin');
                 push(@vr_plot_params, { path => $ofile->path->stringify, type => 'png', caption => 'Coverage' });
                 
-                $self->output_file(temporary => 1, basename => $prefix . '-indel-dist.gp', type => 'txt');
-                $ofile = $self->output_file(output_key => 'bamstats_plots', basename => $prefix . '-indel-dist.png', type => 'bin');
-                push(@vr_plot_params, { path => $ofile->path->stringify, type => 'png', caption => 'Indel distribution' });
-                
-                $self->output_file(temporary => 1, basename => $prefix . '-indel-cycles.gp', type => 'txt');
-                $ofile = $self->output_file(output_key => 'bamstats_plots', basename => $prefix . '-indel-cycles.png', type => 'bin');
-                push(@vr_plot_params, { path => $ofile->path->stringify, type => 'png', caption => 'Indels per cycle' });
+                if ($vr_stats->properties->{'number of insertions'} > 0 && $vr_stats->properties->{'number of deletions'} > 0) {
+                    $self->output_file(temporary => 1, basename => $prefix . '-indel-dist.gp', type => 'txt');
+                    $ofile = $self->output_file(output_key => 'bamstats_plots', basename => $prefix . '-indel-dist.png', type => 'bin');
+                    push(@vr_plot_params, { path => $ofile->path->stringify, type => 'png', caption => 'Indel distribution' });
+                    $self->output_file(temporary => 1, basename => $prefix . '-indel-cycles.gp', type => 'txt');
+                    $ofile = $self->output_file(output_key => 'bamstats_plots', basename => $prefix . '-indel-cycles.png', type => 'bin');
+                    push(@vr_plot_params, { path => $ofile->path->stringify, type => 'png', caption => 'Indels per cycle' });
+                }
                 
                 if ($vr_stats->properties->{'options'} =~ /(?<!\S)-r(?!\S)/) {
                     $self->output_file(temporary => 1, basename => $prefix . '-mism-per-cycle.gp', type => 'txt');
@@ -130,6 +131,12 @@ class VRPipe::Steps::plot_bamstats with VRPipe::StepRole {
                 }
                 
                 $self->output_file(temporary => 1, basename => $prefix . '.html', type => 'txt');
+                
+                # first remove any old plots still attached to the stats file
+                my @existing_plots = $vrstats_file->related(outgoing => { type => 'bamstats_plot' });
+                foreach my $plot (@existing_plots) {
+                    $vrstats_file->divorce_from($plot);
+                }
                 
                 foreach my $params (@vr_plot_params) {
                     my $path = delete $params->{path};
@@ -148,7 +155,7 @@ class VRPipe::Steps::plot_bamstats with VRPipe::StepRole {
             bamstats_plots => VRPipe::StepIODefinition->create(
                 type        => 'bin',
                 description => 'png files produced by plot-bamstats, with a caption in the metadata',
-                min_files   => 11,
+                min_files   => 8,
                 max_files   => -1
             )
         };

@@ -69,6 +69,8 @@ class VRPipe::File extends VRPipe::Persistent {
     
     our %file_type_map = (fastq => 'fq');
     our $config = VRPipe::Config->new();
+    our $global_vrpipe_schema;
+    our $global_vrtrack_schema;
     
     # *** a lot of stuff depends on getting/creating files based on the path
     #     alone. However, with MySQL at least, the search on path is case
@@ -171,6 +173,13 @@ class VRPipe::File extends VRPipe::Persistent {
         builder => '_build_vrpipe_schema',
     );
     
+    has _vrtrack_schema => (
+        is      => 'ro',
+        isa     => 'Object',
+        lazy    => 1,
+        builder => '_build_vrtrack_schema',
+    );
+    
     has _filetype => (
         is      => 'ro',
         isa     => 'Object',
@@ -193,7 +202,13 @@ class VRPipe::File extends VRPipe::Persistent {
     );
     
     method _build_vrpipe_schema {
-        return VRPipe::Schema->create('VRPipe');
+        $global_vrpipe_schema ||= VRPipe::Schema->create('VRPipe');
+        return $global_vrpipe_schema;
+    }
+    
+    method _build_vrtrack_schema {
+        $global_vrtrack_schema ||= VRPipe::Schema->create('VRTrack');
+        return $global_vrtrack_schema;
     }
     
     method _build_filetype {
@@ -208,8 +223,15 @@ class VRPipe::File extends VRPipe::Persistent {
     
     sub _stat {
         my ($self, $path) = @_;
-        $path ||= $self->path; # optional so that we can call this without a db connection by supplying the path
+        $path ||= $self->path;  # optional so that we can call this without a db connection by supplying the path
         $self->throw("no path!") unless $path;
+        
+        # in the case of permission denied we don't want to just think the file
+        # doesn't exist, so we'll throw instead
+        my $ok = open(my $fh, '<', $path);
+        if (!$ok && $! && $! =~ /Permission denied/i) {
+            $self->throw("Could not stat $path: $!");
+        }
         
         # NB: if $path is a symlink, stat returns results for the actual file
         # referenced by the symlink, not the symlink itself, which is what we
@@ -425,7 +447,7 @@ class VRPipe::File extends VRPipe::Persistent {
     
     # speed critical, so sub instead of method
     sub metadata {
-        my ($self, $meta) = @_;
+        my ($self, $meta, %opts) = @_;
         
         if ($meta) {
             $self->keyvallist(VRPipe::KeyValList->get(hash => $meta)->id);
@@ -433,7 +455,20 @@ class VRPipe::File extends VRPipe::Persistent {
         
         if (defined wantarray) {
             my $keyvallist = $self->keyvallist || return {};
-            return $keyvallist->as_hashref;
+            my $meta = $keyvallist->as_hashref;
+            
+            if ($opts{include_vrtrack}) {
+                my $vrtrack = $self->_vrtrack_schema;
+                my $file_node = $vrtrack->get_file($self->protocolless_path, $self->protocol);
+                if ($file_node) {
+                    my $vrmeta = $vrtrack->vrtrack_metadata($file_node);
+                    while (my ($key, $val) = each %$vrmeta) {
+                        $meta->{$key} = $val;
+                    }
+                }
+            }
+            
+            return $meta;
         }
     }
     
@@ -596,24 +631,27 @@ class VRPipe::File extends VRPipe::Persistent {
             $self->check_destination_space($dp->dir);
             
             $self->disconnect;
+            my $error = '[no error msg]';
             if (-l $sp) {
                 # File::Copy::move copies symlinks across filesystem boundries
                 # as the files they point to instead of copying them as
                 # symlinks
                 my $dst = readlink($sp);
                 $success = symlink($dst, $dp);
+                $error = $!;
                 if ($success) {
                     unlink($sp);
                 }
             }
             else {
                 $success = File::Copy::move($sp, $dp);
+                $error = $!;
             }
             
             $dest->update_stats_from_disc;
             unless ($success) {
                 $self->update_stats_from_disc;
-                $self->throw("move of $sp => $dp failed: $!");
+                $self->throw("move of $sp => $dp failed: $error");
             }
             $dest->add_metadata($self->metadata);
         }
@@ -808,7 +846,17 @@ class VRPipe::File extends VRPipe::Persistent {
                 return 1 if $found;
             }
             else {
-                push(@sss, map { $_->stepstate } VRPipe::StepOutputFile->search({ file => $fid }, { prefetch => 'stepstate' }));
+                # try limiting to stepstates that have submissions, since this
+                # is much faster in the case 1 stepstate and sub created the
+                # file, but we have thousands of other stepstates that have
+                # no submissions and no same_submissions_as either (?!)
+                my @these_sss = map { $_->stepstate } VRPipe::StepOutputFile->search({ file => $fid, $single ? ('stepstate.same_submissions_as' => undef, 'submissions.id' => { '!=' => undef }) : () }, { join => { stepstate => 'submissions' }, prefetch => 'stepstate' });
+                if ($single && !@these_sss) {
+                    # however it's legitimate that we can have a sof with no
+                    # submissions
+                    @these_sss = map { $_->stepstate } VRPipe::StepOutputFile->search({ file => $fid, $single ? ('stepstate.same_submissions_as' => undef) : () }, { prefetch => 'stepstate' });
+                }
+                push(@sss, @these_sss);
             }
         }
         return 0 if $quick;
@@ -818,18 +866,6 @@ class VRPipe::File extends VRPipe::Persistent {
         @sss = sort { $a->id <=> $b->id } values %sss;
         
         return @sss unless $single;
-        
-        # if all but 1 of them point to the 1, return that one
-        my %stepstates;
-        foreach my $ss (@sss) {
-            my $ssa = $ss->same_submissions_as;
-            my $resolved = $ssa ? $ssa : $ss;
-            $stepstates{ $resolved->id } = $resolved;
-        }
-        @sss = sort { $a->id <=> $b->id } values %stepstates;
-        if (@sss == 1) {
-            return $sss[0];
-        }
         
         # if all of them share the same job, return the first one
         my %jobs;
@@ -842,6 +878,10 @@ class VRPipe::File extends VRPipe::Persistent {
             if ($count == @sss) {
                 return $sss[0];
             }
+        }
+        
+        if (keys %jobs == 0) {
+            return $sss[0];
         }
         
         return;
@@ -943,17 +983,20 @@ class VRPipe::File extends VRPipe::Persistent {
         
         $self->disconnect;
         my $success;
+        my $error = '[no error msg]';
         if (-l $sp) {
             # File::Copy::copy copies symlinks across filesystem boundries
             # as the files they point to instead of copying them as
             # symlinks
             my $dst = readlink($sp);
             $success = symlink($dst, $dp);
+            $error = $!;
         }
         else {
             # File::Copy::copy and similar do not preserve ownership, so we use
             # unix cp -p instead, which is --preserve=mode,ownership,timestamps
             $success = !system("cp -p $sp $dp");
+            $error   = $!;
         }
         $dest->update_stats_from_disc;
         
@@ -961,7 +1004,7 @@ class VRPipe::File extends VRPipe::Persistent {
             unless ($d_existed) {
                 $dest->remove;
             }
-            $self->throw("copy of $sp => $dp failed: $!");
+            $self->throw("copy of $sp => $dp failed: $error");
         }
         else {
             # check md5s match

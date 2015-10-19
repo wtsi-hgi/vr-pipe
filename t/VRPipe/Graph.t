@@ -5,7 +5,7 @@ use Parallel::ForkManager;
 use Path::Class;
 
 BEGIN {
-    use Test::Most tests => 84;
+    use Test::Most tests => 99;
     use VRPipeTest;
     use_ok('VRPipe::Persistent::Graph');
 }
@@ -101,6 +101,23 @@ is_deeply [sort map { $graph->node_property($_, 'name') } @nodes], [qw(John Libr
 @nodes = $graph->related_nodes($study, incoming => { min_depth => 0 }, outgoing => { min_depth => 0 });
 is_deeply [sort map { $graph->node_property($_, 'name') } @nodes], [qw(Jane John)], 'related_nodes works correctly with a min_depth of 0';
 
+my $closest = $graph->closest_nodes_with_label($john, 'VRTrack', 'Study', direction => 'incoming');
+is $graph->node_property($closest, 'name'), 'Study of Disease_xyz', 'closest_nodes_with_label(incoming) worked';
+$closest = $graph->closest_nodes_with_label($john, 'VRTrack', 'Study');
+is $graph->node_property($closest, 'name'), 'Study of Disease_xyz', 'closest_nodes_with_label() worked';
+$closest = $graph->closest_nodes_with_label($john, 'VRTrack', 'Lane', direction => 'incoming');
+is $closest, undef, 'closest_nodes_with_label(incoming) returns nothing if searching for something that does not exist';
+$closest = $graph->closest_nodes_with_label($john, 'VRTrack', 'Lane', direction => 'outgoing');
+like $graph->node_property($closest, 'name'), qr/Lane[12]/, 'closest_nodes_with_label(outgoing) worked';
+my @closest = $graph->closest_nodes_with_label($john, 'VRTrack', 'Lane', direction => 'outgoing', all => 1);
+is_deeply [sort map { $graph->node_property($_, 'name') } @closest], [qw(Lane1 Lane2)], 'closest_nodes_with_label(all => 1) worked';
+@closest = $graph->closest_nodes_with_label($john, 'VRTrack', 'Lane', direction => 'outgoing', all => 1, properties => [['foo', 'bar']]);
+is_deeply [sort map { $graph->node_property($_, 'name') } @closest], [qw(Lane2)], 'closest_nodes_with_label() with a specific property limit worked';
+@closest = $graph->closest_nodes_with_label($john, 'VRTrack', 'Lane', direction => 'outgoing', all => 1, properties => [['foo', 'b\w.*', 1]]);
+is_deeply [sort map { $graph->node_property($_, 'name') } @closest], [qw(Lane2)], 'closest_nodes_with_label() with a regex property limit worked';
+@closest = $graph->closest_nodes_with_label($john, 'VRTrack', 'Lane', direction => 'outgoing', all => 1, properties => [['name', 'Lane\d+', 1], ['name', 'Lane[13]', 1]]);
+is_deeply [sort map { $graph->node_property($_, 'name') } @closest], [qw(Lane1)], 'closest_nodes_with_label() with multiple regex property limits worked';
+
 # test deleting relationships
 my $samson  = $graph->add_node(namespace => 'VRTrack', label => 'Individual', properties => { name => 'Samson' });
 my $delilah = $graph->add_node(namespace => 'VRTrack', label => 'Individual', properties => { name => 'Delilah' });
@@ -130,7 +147,7 @@ push(@root_ids, $graph->node_id($study));
 $graph->relate($study, $jane, type => 'has_participant');
 $graph->add_schema(namespace => 'OtherNS', label => 'Workplace', unique => [qw(name)], indexed => []);
 my $workplace = $graph->add_node(namespace => 'OtherNS', label => 'Workplace', properties => { name => 'Sanger' });
-$graph->add_schema(namespace => 'OtherNS', label => 'Individual', unique => [qw(name)], indexed => []);
+$graph->add_schema(namespace => 'OtherNS', label => 'Individual', unique => [qw(name)], indexed => [qw(foo)]);
 my @props;
 
 for (1 .. 1000) {
@@ -222,6 +239,20 @@ is_deeply $fresh_step_result->{properties}, { uuid => $uuid, foo => 'baz', lemur
 $node = $graph->get_node_by_id($graph->node_id($step_result));
 is_deeply $node->{properties}, { uuid => $uuid, foo => 'baz', lemur => 'lamella' }, 'get_node_by_id() worked';
 
+# we can search using regexes
+@nodes = $graph->get_nodes_by_regex(namespace => 'OtherNS', label => 'Individual', properties => { name => 'Person\d+' });
+is scalar(@nodes), 1050, 'get_nodes_by_regex() worked';
+@nodes = $graph->get_nodes_by_regex(namespace => 'OtherNS', label => 'Individual', properties => { name => 'Person1.+' });
+is scalar(@nodes), 161, 'get_nodes_by_regex() worked with a different regex';
+foreach my $i (1 .. 5) {
+    my $node = $nodes[$i - 1];
+    $graph->node_add_properties($node, { foo => 'Bar' . $i });
+}
+@nodes = $graph->get_nodes_by_regex(namespace => 'OtherNS', label => 'Individual', properties => { name => 'Person1.+', foo => 'Bar\d+' });
+is scalar(@nodes), 5, 'get_nodes_by_regex() worked with 2 regexs';
+@nodes = $graph->get_nodes_by_regex(namespace => 'OtherNS', label => 'Individual', properties => { name => 'Person1.+', foo => 'Bar1' });
+is scalar(@nodes), 1, 'get_nodes_by_regex() worked with a regex and a literal';
+
 # usually you can have node related to an unlimited number of other nodes,
 # but sometimes you want it to only connect to a single node of a certain type,
 # and an update should remove any existing links before applying the new one
@@ -261,12 +292,28 @@ is_deeply [sort map { $graph->node_property($_, 'sanger_id') } @queued], ['enque
 is_deeply [sort map { $graph->node_property($_, 'sanger_id') } ($graph->get_nodes(namespace => 'VRTrack', label => 'Sample', properties => { sanger_id => 'enqueue1' }), $graph->get_nodes(namespace => 'VRTrack', label => 'Sample', properties => { sanger_id => 'enqueue2' }))], ['enqueue1', 'enqueue2'], 'after dispatch_queue() the enqueued nodes are in the database';
 
 # we can set properties on a relationship (this is so far a rare-case usage, so
-# there isn't an easy way to set this at node/relationship creation time, nor
-# easy way to get relationships)
+# there isn't an easy way to set this at node creation time, nor an easy way to
+# get relationships)
 $image2 = $graph->add_node(namespace => 'VRPipe', label => 'Image', properties => { path => 'img2', type => 'png' }, incoming => { node => $image, type => 'sub_image' });
 my ($rel) = @{ $graph->related($image2, undef, {})->{relationships} };
 $graph->relationship_set_properties($rel, { reason => 'likes subs' });
 ($rel) = @{ $graph->related($image2, undef, {})->{relationships} };
 is_deeply $rel->{properties}, { reason => 'likes subs' }, 'relationship_set_properties() worked';
+my $image4 = $graph->add_node(namespace => 'VRPipe', label => 'Image', properties => { path => 'img4', type => 'png' });
+$graph->relate($image4, $image2, type => 'sub_img', properties => { foo => 'bar', relprop => 'relval' });
+($rel) = @{ $graph->related($image4, undef, undef, {})->{relationships} };
+is_deeply $rel->{properties}, { foo => 'bar', relprop => 'relval' }, 'relate(properties => {}) worked';
+$graph->relate($image4, $image2, type => 'sub_img', properties => { foo => 'car' });
+($rel) = @{ $graph->related($image4, undef, undef, {})->{relationships} };
+is_deeply $rel->{properties}, { foo => 'car' }, 'relate(properties => {}) again replaces existing relationship properties';
+my $image5 = $graph->add_node(namespace => 'VRPipe', label => 'Image', properties => { path => 'img5', type => 'png' });
+@rel_details = ();
+
+for (2, 4) {
+    push(@rel_details, { from => $image5, to => { namespace => 'VRPipe', label => 'Image', properties => { path => "img$_", type => 'png' } }, type => 'sub_img', properties => { relprop => "relval$_" } });
+}
+$graph->create_mass_relationships(\@rel_details);
+my @rels = @{ $graph->related($image5, undef, undef, {})->{relationships} };
+is_deeply [map { $_->{properties}->{relprop} } sort { $a->{id} <=> $b->{id} } @rels], [qw(relval2 relval4)], 'create_mass_relationships() can create relationships with properties set';
 
 exit;

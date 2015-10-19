@@ -96,9 +96,8 @@ class VRPipe::Steps::bam_recalibrate_quality_scores extends VRPipe::Steps::gatk 
                 );
                 
                 my $temp_dir = $options->{tmp_dir} || $recal_bam_file->dir;
-                my $jvm_args = $self->jvm_args($req->memory, $temp_dir);
                 
-                my $this_cmd = $self->java_exe . qq[ $jvm_args -jar ] . $self->jar . qq[ -T TableRecalibration -R $ref -recalFile ] . $recal_file->path . qq[ -I ] . $bam->path . qq[ -o ] . $recal_bam_file->path . qq[ $recal_opts];
+                my $this_cmd = $self->gatk_prefix($req->memory, $temp_dir) . qq[ -T TableRecalibration -R $ref -recalFile ] . $recal_file->path . qq[ -I ] . $bam->path . qq[ -o ] . $recal_bam_file->path . qq[ $recal_opts];
                 $self->dispatch_wrapped_cmd('VRPipe::Steps::bam_recalibrate_quality_scores', 'recal_and_check', [$this_cmd, $req, { output_files => [$recal_bam_file] }]);
             }
         };
@@ -155,17 +154,7 @@ class VRPipe::Steps::bam_recalibrate_quality_scores extends VRPipe::Steps::gatk 
             system($cmd_line) && $self->throw("failed to run [$cmd_line]");
         }
         
-        $out_file->update_stats_from_disc(retries => 3);
-        my $expected_reads = $in_file->metadata->{reads} || $in_file->num_records;
-        my $actual_reads = $out_file->num_records;
-        
-        if ($actual_reads == $expected_reads) {
-            return 1;
-        }
-        else {
-            $out_file->unlink;
-            $self->throw("cmd [$cmd_line] failed because $actual_reads reads were generated in the output bam file, yet there were $expected_reads reads in the original bam file");
-        }
+        $out_file->_filetype->check_records_vs_input($in_file, $cmd_line);
     }
 }
 

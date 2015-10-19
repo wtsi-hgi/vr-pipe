@@ -88,11 +88,12 @@ class VRPipe::Persistent::Graph {
     use Data::UUID;
     use DateTime::Format::Natural;
     use MIME::Base64;
+    use URI::Escape;
     
     our $json       = JSON::XS->new->allow_nonref(1);
     our $data_uuid  = Data::UUID->new();
     our $vrp_config = VRPipe::Config->new();
-    our ($ua, $transaction_endpoint, $global_label, $schemas, $schema_labels);
+    our ($ua, $url, $transaction_endpoint, $global_label, $schemas, $schema_labels);
     our $ua_headers = { 'Accept' => 'application/json', 'Content-Type' => 'application/json', 'Charset' => 'UTF-8', 'X-Stream' => 'true' };
     
     has 'throw_with_no_stacktrace' => (
@@ -121,12 +122,13 @@ class VRPipe::Persistent::Graph {
             # we use Mojo::UserAgent instead of LWP::UserAgent because LWP has
             # some kind of truncation bug when we try to get very large
             # responses from Neo4J
+            $ENV{MOJO_MAX_MESSAGE_SIZE} = 0; # avoid Maximum message size exceeded errors when we get lots of data from a query
             $ua = Mojo::UserAgent->new();
             $ua->connect_timeout(60)->inactivity_timeout(0)->request_timeout(0);
             
             # connect and get the transaction endpoint
             my $method_name = $deployment . '_neo4j_server_url';
-            my $url         = $vrp_config->$method_name();
+            $url         = $vrp_config->$method_name();
             $method_name = $deployment . '_neo4j_user';
             my $user = $vrp_config->$method_name();
             $method_name = $deployment . '_neo4j_password';
@@ -139,24 +141,39 @@ class VRPipe::Persistent::Graph {
                 $ua_headers->{Authorization} = 'Basic ' . substr(encode_base64("$user:$password"), 0, -2);
             }
             
-            my $tx = $ua->get("$url" => $ua_headers);
-            my $res = $tx->success;
-            unless ($res) {
-                my $err = $tx->error;
-                $self->throw("Failed to connect to '$url': [$err->{code}] $err->{message}");
+            foreach my $try_num (1 .. 20) {
+                eval {
+                    my $tx = $ua->get("$url" => $ua_headers);
+                    my $res = $tx->success;
+                    unless ($res) {
+                        my $err = $tx->error;
+                        $self->throw("Failed to connect to '$url': [$err->{code}] $err->{message}");
+                    }
+                    my $decode = $json->decode($res->body);
+                    my $data_endpoint = $decode->{data} || $self->throw("No data endpoint found at $url");
+                    
+                    $tx = $ua->get($data_endpoint => $ua_headers);
+                    $res = $tx->success;
+                    unless ($res) {
+                        my $err = $tx->error;
+                        $self->throw("Failed to connect to '$data_endpoint': [$err->{code}] $err->{message}");
+                    }
+                    $decode = $json->decode($res->body);
+                    $transaction_endpoint = $decode->{transaction} || $self->throw("No transaction endpoint found at $data_endpoint");
+                    $transaction_endpoint .= '/commit';
+                };
+                if ($@) {
+                    if ($try_num == 20) {
+                        die $@;
+                    }
+                    else {
+                        sleep($try_num * 2);
+                    }
+                }
+                else {
+                    last;
+                }
             }
-            my $decode = $json->decode($res->body);
-            my $data_endpoint = $decode->{data} || $self->throw("No data endpoint found at $url");
-            
-            $tx = $ua->get($data_endpoint => $ua_headers);
-            $res = $tx->success;
-            unless ($res) {
-                my $err = $tx->error;
-                $self->throw("Failed to connect to '$data_endpoint': [$err->{code}] $err->{message}");
-            }
-            $decode = $json->decode($res->body);
-            $transaction_endpoint = $decode->{transaction} || $self->throw("No transaction endpoint found at $data_endpoint");
-            $transaction_endpoint .= '/commit';
             
             if ($deployment eq 'production') {
                 $global_label = "vdp";
@@ -179,6 +196,10 @@ class VRPipe::Persistent::Graph {
         }
     }
     
+    sub _global_label {
+        return $global_label;
+    }
+    
     sub _run_cypher {
         my ($self, $array, $args) = @_;
         my $return_schema_nodes  = $args->{return_schema_nodes};
@@ -198,27 +219,50 @@ class VRPipe::Persistent::Graph {
                 }
             );
         }
-        #warn "cypher: $example_cypher (plus ", scalar($#{$array}), " similar)\n";
         
         my $decode;
-        for (1 .. 20) {
-            my $tx = $ua->post($transaction_endpoint => $ua_headers => json => $post_content);
-            my $res = $tx->success;
+        foreach my $try_num (1 .. 20) {
+            my ($tx, $res);
+            eval { $tx = $ua->post($transaction_endpoint => $ua_headers => json => $post_content); };
+            $res = $tx->success if $tx;
             unless ($res) {
-                my $err = $tx->error;
-                $self->throw('[' . $err->{code} . '] ' . " [$example_cypher] " . $err->{message});
+                my $err  = $tx->error;
+                my $code = $err->{code};
+                $code ||= 'no error code';
+                my $message = $err->{message};
+                $message ||= $@ || '(no message)';
+                
+                if ($message =~ /connection/i) {
+                    # neo4j server may be down during a backup, so we'll wait a
+                    # a few mins for it to come back
+                    warn "retrying cypher [$example_cypher] due to: [$code] $message\n";
+                    sleep(2 * $try_num);
+                    next;
+                }
+                
+                $self->throw("[$code] [$example_cypher] $message");
             }
             $decode = $json->decode($res->body);
             
             my $errors = $decode->{errors};
             if (@$errors) {
-                my $error = $errors->[0];
-                if ($error->{code} =~ /CouldNotCommit|TransientError/) {
-                    warn "retrying cypher [$example_cypher] due to: ", '[' . $error->{code} . '] ' . $error->{message}, "\n";
-                    sleep(1);
+                my $err  = $errors->[0];
+                my $code = $err->{code};
+                $code ||= 'no error code';
+                my $message = $err->{message};
+                $message ||= '(no message)';
+                if ($try_num < 20 && ($code =~ /CouldNotCommit|TransientError/ || $message =~ /connection/i)) {
+                    warn "retrying cypher [$example_cypher] due to: [$code] $message\n";
+                    
+                    if ($message =~ /connection/i) {
+                        sleep(2 * $try_num);
+                    }
+                    else {
+                        sleep(1);
+                    }
                 }
                 else {
-                    $self->throw('[' . $error->{code} . '] ' . " [$example_cypher] " . $error->{message});
+                    $self->throw("[$code] [$example_cypher] $message");
                 }
             }
             else {
@@ -642,6 +686,22 @@ class VRPipe::Persistent::Graph {
         return $nodes[0];
     }
     
+    # properties is { property => 'regex', ... }
+    method get_nodes_by_regex (Str :$namespace!, Str :$label!, HashRef :$properties!) {
+        my $labels = $self->_labels($namespace, $label);
+        
+        my %regexes;
+        my @wheres;
+        while (my ($key, $val) = each %$properties) {
+            $regexes{$key} = $val;
+            my $operator = $val =~ /^[\w\-#]+$/ ? '=' : '=~';
+            push(@wheres, "n.`$key` $operator {param}.`$key`");
+        }
+        my $where = join(' AND ', @wheres);
+        
+        return @{ $self->_run_cypher([[qq{MATCH (n:$labels) WHERE $where RETURN n}, { 'param' => \%regexes }]])->{nodes} };
+    }
+    
     sub node_id {
         my ($self, $node) = @_;
         if (defined $node->{id}) {
@@ -660,14 +720,14 @@ class VRPipe::Persistent::Graph {
             unless (exists $node->{parent_properties}) {
                 # get all the node properties of all parent nodes
                 $node->{parent_properties} = {};
-                foreach my $parent ($self->related_nodes($node, incoming => { min_depth => 1, max_depth => 999 })) {
+                foreach my $parent ($self->related_nodes($node, incoming => { min_depth => 1, max_depth => 6 })) { # we can't have max_depth 999 since that can kill Neo4J
                     my $prefix = $parent->{namespace} ne $node->{namespace} ? $parent->{namespace} . '_' : '';
                     $prefix .= $parent->{label};
                     $prefix = lc($prefix);
                     
                     while (my ($key, $val) = each %{ $parent->{properties} || {} }) {
                         my $full_key = $prefix . '_' . $key;
-                        $node->{parent_properties}->{$full_key} = $val; #*** we should probably merge and keep multiple vals for same full_key
+                        $node->{parent_properties}->{$full_key} = $val;                                            #*** we should probably merge and keep multiple vals for same full_key
                     }
                 }
             }
@@ -695,8 +755,7 @@ class VRPipe::Persistent::Graph {
     
     method node_set_properties (HashRef|Object $node!, HashRef $properties!) {
         my $id = $self->node_id($node);
-        my $properties_map = $self->_param_map($properties, 'param');
-        my ($updated_node) = @{ $self->_run_cypher([["MATCH (n) WHERE id(n) = $id SET n = $properties_map return n", { 'param' => $properties }]])->{nodes} };
+        my ($updated_node) = @{ $self->_run_cypher([["MATCH (n) WHERE id(n) = $id SET n = { props } return n", { 'props' => $properties }]])->{nodes} };
         $node->{properties} = $updated_node->{properties};
         return;
     }
@@ -716,7 +775,8 @@ class VRPipe::Persistent::Graph {
     # with the same label (and relationship type) as the end_node.
     # selfish => 1, replace => 1 gives you a 1:1 relationship between nodes of
     # the relevant labels and with the given relationship type.
-    method relate (HashRef|Object $start_node!, HashRef|Object $end_node!, Str :$type!, Bool :$selfish = 0, Bool :$replace = 0) {
+    # properties option are properties to set on the relationship itself.
+    method relate (HashRef|Object $start_node!, HashRef|Object $end_node!, Str :$type!, HashRef :$properties?, Bool :$selfish = 0, Bool :$replace = 0) {
         my @cypher;
         
         if ($selfish) {
@@ -729,12 +789,18 @@ class VRPipe::Persistent::Graph {
             push(@cypher, ["MATCH (a)-[r:$type]->(b:$labels) WHERE id(a) = $start_node->{id} AND id(b) <> $end_node->{id} DELETE r"]);
         }
         
-        push(@cypher, ["MATCH (a),(b) WHERE id(a) = $start_node->{id} AND id(b) = $end_node->{id} MERGE (a)-[r:$type]->(b) RETURN r"]);
+        my $r_props = '';
+        if ($properties) {
+            my $map = $self->_param_map($properties, 'param');
+            $r_props = " SET r = $map";
+        }
+        
+        push(@cypher, ["MATCH (a),(b) WHERE id(a) = $start_node->{id} AND id(b) = $end_node->{id} MERGE (a)-[r:$type]->(b)$r_props RETURN r", $r_props ? ({ 'param' => $properties }) : ()]);
         
         return @{ $self->_run_cypher(\@cypher)->{relationships} };
     }
     
-    # each hashref in $spec_list is { from => { id }|{ namespace, label, properties }, to => {...}, type => '...' }
+    # each hashref in $spec_list is { from => { id }|{ namespace, label, properties }, to => {...}, type => '...', properties => {} }
     method create_mass_relationships (ArrayRef[HashRef] $spec_list) {
         my @cypher;
         
@@ -758,7 +824,14 @@ class VRPipe::Persistent::Graph {
                 }
             }
             
-            push(@cypher, [$match . " MERGE (from)-[:$type]->(to)", $params]);
+            my $r_props = '';
+            if ($spec->{properties}) {
+                my $map = $self->_param_map($spec->{properties}, 'relparams');
+                $r_props = " SET r = $map";
+                $params->{relparams} = $spec->{properties};
+            }
+            
+            push(@cypher, [$match . " MERGE (from)-[r:$type]->(to)$r_props", $params]);
         }
         
         $self->_run_cypher(\@cypher);
@@ -766,10 +839,22 @@ class VRPipe::Persistent::Graph {
     
     # delete all relationships between 2 nodes, optionally limited by type
     method divorce (HashRef|Object $start_node!, HashRef|Object $end_node!, Str :$type?) {
-        $type ||= '';
-        $type &&= ':' . $type;
-        my $cypher = "MATCH (a)-[rel$type]-(b) WHERE id(a) = $start_node->{id} AND id(b) = $end_node->{id} DELETE rel";
-        $self->_run_cypher([[$cypher]]);
+        $self->mass_divorce([[$start_node, $end_node, $type ? ($type) : ()]]);
+    }
+    
+    # each member of $spec_list is [$start_node, $end_node, $type], where $type
+    # is optional
+    method mass_divorce (ArrayRef $spec_list!) {
+        my @cypher;
+        
+        foreach my $spec (@$spec_list) {
+            my ($start_node, $end_node, $type) = @$spec;
+            $type ||= '';
+            $type &&= ':' . $type;
+            push(@cypher, ["MATCH (a)-[rel$type]-(b) WHERE id(a) = $start_node->{id} AND id(b) = $end_node->{id} DELETE rel"]);
+        }
+        
+        $self->_run_cypher(\@cypher);
     }
     
     method relationship_set_properties (HashRef $rel!, HashRef $properties!) {
@@ -796,47 +881,109 @@ class VRPipe::Persistent::Graph {
         }
         
         my $start_id = $self->node_id($start_node);
-        if ($undirected) {
-            my ($result_node_spec, $properties, $type, $min_depth, $max_depth) = $self->_related_nodes_hashref_parse($undirected, 'param');
-            my $return = $result_nodes_only ? 'u' : 'p';
-            my $depth = ($min_depth == 1 && $max_depth == 1) ? '' : "*$min_depth..$max_depth";
-            my $cypher = "MATCH p = (start)-[$type$depth]-(u$result_node_spec) WHERE id(start) = $start_id RETURN $return";
-            return $self->_run_cypher([[$cypher, { 'param' => $properties }]]);
-        }
-        else {
-            my (%all_properties, @return);
-            my $most = '';
-            my $left = '';
-            if ($incoming) {
-                my ($result_node_spec, $properties, $type, $min_depth, $max_depth) = $self->_related_nodes_hashref_parse($incoming, 'left');
-                my $depth = ($min_depth == 1 && $max_depth == 1) ? '' : "*$min_depth..$max_depth";
-                $left = "(l$result_node_spec)-[$type$depth]->";
-                push(@return, 'l');
-                $all_properties{left} = $properties if $properties;
-                if ($incoming->{leftmost} && $max_depth > 1) {
-                    $most = "AND NOT (l)<-[$type]-($result_node_spec) ";
-                }
-            }
-            my $right = '';
-            if ($outgoing) {
-                my ($result_node_spec, $properties, $type, $min_depth, $max_depth) = $self->_related_nodes_hashref_parse($outgoing, 'right');
-                my $depth = ($min_depth == 1 && $max_depth == 1) ? '' : "*$min_depth..$max_depth";
-                $right = "-[$type$depth]->(r$result_node_spec)";
-                push(@return, 'r');
-                $all_properties{right} = $properties if $properties;
-                if ($outgoing->{rightmost} && $max_depth > 1) {
-                    $most = "AND NOT (r)-[$type]->($result_node_spec) ";
-                }
-            }
+        
+        # if we have a max_depth > 6 and a node spec and no type, we're going to
+        # repeat the query while incrementing max_depth by 1, starting from
+        # $min_depth, until we get any nodes. This could be orders of magnitude
+        # faster than doing 1..20. (We can't cope with both incoming and
+        # outgoing have a max_depth > 6, because we can't easily know which side
+        # any returned nodes were for)
+        my $limit_depth     = 0;
+        my $depth_increment = 0;
+        while (1) {
+            my ($cypher, $props, $low_depth, $high_depth);
             
-            my $return;
-            if ($result_nodes_only) {
-                $return = join(', ', @return);
+            if ($undirected) {
+                my ($result_node_spec, $properties, $type, $min_depth, $max_depth) = $self->_related_nodes_hashref_parse($undirected, 'param');
+                my $return = $result_nodes_only ? 'DISTINCT u' : 'p';
+                if ($max_depth > 6 && $result_node_spec && !$type) {
+                    $low_depth  = $min_depth;
+                    $high_depth = $max_depth;
+                }
+                if ($limit_depth) {
+                    $min_depth = $limit_depth;
+                    $max_depth = $limit_depth;
+                }
+                my $depth = ($min_depth == 1 && $max_depth == 1) ? '' : "*$min_depth..$max_depth";
+                $cypher = "MATCH p = (start)-[$type$depth]-(u$result_node_spec) WHERE id(start) = $start_id RETURN $return";
+                $props = { 'param' => $properties };
             }
             else {
-                $return = 'p';
+                my (%all_properties, @return);
+                my $most = '';
+                my $left = '';
+                if ($incoming) {
+                    my ($result_node_spec, $properties, $type, $min_depth, $max_depth) = $self->_related_nodes_hashref_parse($incoming, 'left');
+                    if ($max_depth > 6 && $result_node_spec && !$type) {
+                        $low_depth  = $min_depth;
+                        $high_depth = $max_depth;
+                    }
+                    if ($limit_depth) {
+                        $min_depth = $limit_depth;
+                        $max_depth = $limit_depth;
+                    }
+                    my $depth = ($min_depth == 1 && $max_depth == 1) ? '' : "*$min_depth..$max_depth";
+                    $left = "(l$result_node_spec)-[$type$depth]->";
+                    push(@return, 'l');
+                    $all_properties{left} = $properties if $properties;
+                    if ($incoming->{leftmost} && $max_depth > 1) {
+                        $most = "AND NOT (l)<-[$type]-($result_node_spec) ";
+                    }
+                }
+                my $right = '';
+                if ($outgoing) {
+                    my ($result_node_spec, $properties, $type, $min_depth, $max_depth) = $self->_related_nodes_hashref_parse($outgoing, 'right');
+                    if ($max_depth > 6 && $result_node_spec && !$type) {
+                        if ($high_depth) {
+                            # can't cope with both incoming and outgoing having
+                            # high max_depth, will behave as if neither did
+                            undef $high_depth;
+                        }
+                        else {
+                            $low_depth  = $min_depth;
+                            $high_depth = $max_depth;
+                        }
+                    }
+                    if ($limit_depth) {
+                        $min_depth = $limit_depth;
+                        $max_depth = $limit_depth;
+                    }
+                    my $depth = ($min_depth == 1 && $max_depth == 1) ? '' : "*$min_depth..$max_depth";
+                    $right = "-[$type$depth]->(r$result_node_spec)";
+                    push(@return, 'r');
+                    $all_properties{right} = $properties if $properties;
+                    if ($outgoing->{rightmost} && $max_depth > 1) {
+                        $most = "AND NOT (r)-[$type]->($result_node_spec) ";
+                    }
+                }
+                
+                my $return;
+                if ($result_nodes_only) {
+                    $return = 'DISTINCT ' . join(', ', @return);
+                }
+                else {
+                    $return = 'p';
+                }
+                
+                $cypher = "MATCH p = $left(start)$right where id(start) = $start_id ${most}RETURN $return";
+                $props = keys %all_properties ? \%all_properties : undef;
             }
-            return $self->_run_cypher([["MATCH p = $left(start)$right where id(start) = $start_id ${most}RETURN $return", keys %all_properties ? \%all_properties : ()]], $return_history_nodes ? ({ return_history_nodes => 1 }) : ());
+            
+            if ($high_depth) {
+                if ($limit_depth) {
+                    my $hash = $self->_run_cypher([[$cypher, $props ? ($props) : ()]], $return_history_nodes ? ({ return_history_nodes => 1 }) : ());
+                    if ($hash && defined $hash->{nodes} && @{ $hash->{nodes} }) {
+                        return $hash;
+                    }
+                }
+                
+                $limit_depth = $low_depth + $depth_increment++;
+                last if $limit_depth > $high_depth;
+                redo;
+            }
+            else {
+                return $self->_run_cypher([[$cypher, $props ? ($props) : ()]], $return_history_nodes ? ({ return_history_nodes => 1 }) : ());
+            }
         }
     }
     
@@ -855,7 +1002,85 @@ class VRPipe::Persistent::Graph {
     
     method related_nodes (HashRef|Object $start_node!, Bool :$return_history_nodes = 0, HashRef :$outgoing?, HashRef :$incoming?, HashRef :$undirected?) {
         my $start_id = $start_node->{id};
-        return grep { $_->{id} != $start_id } @{ $self->related($start_node, $undirected, $incoming, $outgoing, 1, $return_history_nodes)->{nodes} };
+        my $hash = $self->related($start_node, $undirected, $incoming, $outgoing, 1, $return_history_nodes);
+        return unless ($hash && defined $hash->{nodes});
+        return grep { $_->{id} != $start_id } @{ $hash->{nodes} };
+    }
+    
+    # direction is 'incoming' or 'outgoing'. Undef means undirected
+    # properties is [['key', 'value', 0], [ ... ]], where third value is a booleon which if true means the value is treated as a regex
+    method closest_nodes_with_label (HashRef|Object $start_node!, Str $namespace!, Str $label!, Str :$direction?, ArrayRef[ArrayRef] :$properties?, Int :$depth = 100, Bool :$all = 0) {
+        my $start_id = $start_node->{id};
+        my $dir      = $direction ? "&direction=$direction" : '';
+        my $prop     = '';
+        if ($properties) {
+            my @props;
+            foreach my $prop_array (@$properties) {
+                my ($key, $val, $regex) = @$prop_array;
+                my $type = $regex ? 'regex' : 'literal';
+                $val = uri_escape($val);
+                push(@props, "$type\%40_\%40$key\%40_\%40$val");
+            }
+            my $props = join('%40%40%40', @props);
+            $prop = "&properties=$props";
+        }
+        
+        return $self->_call_vrpipe_neo4j_plugin_and_parse("/closest/$global_label\%7C$namespace\%7C$label/to/$start_id?depth=$depth&all=$all$dir$prop", namespace => $namespace, label => $label);
+    }
+    
+    method _call_vrpipe_neo4j_plugin_and_parse (Str $path!, Str :$namespace!, Str :$label?) {
+        my $data = $self->_call_vrpipe_neo4j_plugin($path);
+        
+        my @nodes;
+        if ($data && ref($data) eq 'HASH') {
+            while (my ($nid, $props) = each %{$data}) {
+                my $this_label = delete $props->{neo4j_label};
+                $this_label ||= $label;
+                $this_label || $self->throw("No label supplied, and none returned by the plugin");
+                push(@nodes, { id => int($nid), namespace => $namespace, label => $this_label, properties => $props });
+            }
+        }
+        
+        if (@nodes) {
+            if (wantarray) {
+                return @nodes;
+            }
+            return $nodes[0];
+        }
+        return;
+    }
+    
+    sub _call_vrpipe_neo4j_plugin {
+        # this plugin needs to be installed in Neo4J first:
+        # https://github.com/VertebrateResequencing/vrpipe_neo4j_plugin
+        my ($self, $path) = @_;
+        my $pluginurl = "$url/v1/service$path";
+        
+        my $data;
+        foreach my $try_num (1 .. 20) {
+            eval {
+                my $tx = $ua->get($pluginurl => $ua_headers);
+                my $res = $tx->success;
+                unless ($res) {
+                    my $err = $tx->error;
+                    $self->throw("Failed to connect to '$pluginurl': [$err->{code}] $err->{message}");
+                }
+                $data = $json->decode($res->body);
+            };
+            if ($@) {
+                if ($try_num == 20) {
+                    die $@;
+                }
+                else {
+                    sleep($try_num * 2);
+                }
+            }
+            else {
+                last;
+            }
+        }
+        
+        return $data;
     }
     
     method root_nodes {
@@ -869,7 +1094,9 @@ class VRPipe::Persistent::Graph {
     
     sub json_decode {
         shift;
-        return $json->decode(shift);
+        my $str = shift;
+        return unless $str;
+        return $json->decode($str);
     }
     
     method date_to_epoch (Str $dstr) {

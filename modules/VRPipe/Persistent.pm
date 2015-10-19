@@ -209,7 +209,7 @@ Sendu Bala <sb10@sanger.ac.uk>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2011-2013 Genome Research Limited.
+Copyright (c) 2011-2015 Genome Research Limited.
 
 This file is part of VRPipe.
 
@@ -277,10 +277,11 @@ class VRPipe::Persistent extends (DBIx::Class::Core, VRPipe::Base::Moose) { # be
     );
     
     has '_in_memory' => (
-        is      => 'ro',
-        isa     => 'Object',
-        lazy    => 1,
-        builder => '_build_in_memory_obj'
+        is        => 'ro',
+        isa       => 'Object',
+        lazy      => 1,
+        builder   => '_build_in_memory_obj',
+        predicate => '_in_memory_created'
     );
     
     # for when this instance was not retrieved via get()
@@ -475,7 +476,7 @@ class VRPipe::Persistent extends (DBIx::Class::Core, VRPipe::Base::Moose) { # be
                     ($cname, $size, $is_numeric) = $converter->get_column_info(size => -1, is_numeric => 0);
                 }
                 elsif ($cname eq 'FileType') {
-                    $size = 4;
+                    $size = 8;
                     ($cname, $size, $is_numeric) = $converter->get_column_info(size => $size, is_numeric => 0);
                 }
                 else {
@@ -955,12 +956,6 @@ class VRPipe::Persistent extends (DBIx::Class::Core, VRPipe::Base::Moose) { # be
             return $self->_in_memory->lock($lock_key, @_);
         });
         
-        $meta->add_method('refresh_lock' => sub { 
-            my $self     = shift;
-            my $lock_key = $table_name . '.' . $self->id;
-            return $self->_in_memory->refresh_lock($lock_key, @_);
-        });
-        
         $meta->add_method('unlock' => sub { 
             my $self     = shift;
             my $lock_key = $table_name . '.' . $self->id;
@@ -983,16 +978,9 @@ class VRPipe::Persistent extends (DBIx::Class::Core, VRPipe::Base::Moose) { # be
         $meta->add_method('block_until_locked' => sub { 
             my $self     = shift;
             my $lock_key = $table_name . '.' . $self->id;
-            return if $self->lock();
             $self->_in_memory->block_until_locked($lock_key, @_);
             $self->reselect_values_from_db;
             return 1;
-        });
-        
-        $meta->add_method('maintain_lock' => sub { 
-            my $self     = shift;
-            my $lock_key = $table_name . '.' . $self->id;
-            return $self->_in_memory->maintain_lock($lock_key, @_);
         });
         
         $meta->add_method('note' => sub { 
@@ -1014,6 +1002,19 @@ class VRPipe::Persistent extends (DBIx::Class::Core, VRPipe::Base::Moose) { # be
             my $lock_key = $table_name . '.' . $self->id;
             my $note     = shift;
             return $self->_in_memory->noted($lock_key . '.' . $note, @_);
+        });
+        
+        $meta->add_method('assert_life' => sub { 
+            my $self = shift;
+            my $key  = $table_name . '.' . $self->id;
+            $self->disconnect;
+            return $self->_in_memory->assert_life($key, @_);
+        });
+        
+        $meta->add_method('is_alive' => sub { 
+            my $self = shift;
+            my $key  = $table_name . '.' . $self->id;
+            return $self->_in_memory->is_alive($key, @_);
         });
         
         # if we'll use a Persistent instance in a repeatedly called fork we want
@@ -1098,7 +1099,7 @@ class VRPipe::Persistent extends (DBIx::Class::Core, VRPipe::Base::Moose) { # be
                 # split up the find and create calls. Actually, search() is
                 # faster than find(), and not sure we need any of the fancy
                 # munging that find() does for us.
-                ($return, my @extra) = $rs->search(\%search_args, { $create ? (for => 'update') : (), order_by => { -asc => 'id' } }) if keys %search_args;
+                ($return, my @extra) = $rs->search(\%search_args, { $create == 1 ? (for => 'update') : (), order_by => { -asc => 'id' } }) if keys %search_args;
                 
                 # there should not be any @extra, but some rare weirdness may give
                 # us duplicate rows in the db; take this opportunity to delete them
@@ -1129,7 +1130,7 @@ class VRPipe::Persistent extends (DBIx::Class::Core, VRPipe::Base::Moose) { # be
                 }
                 $return->update;
             }
-            elsif ($create) {
+            elsif ($create == 1) {
                 # create the row using all db column keys
                 $return = $rs->create({ %find_args, %args });
             }
@@ -1144,7 +1145,7 @@ class VRPipe::Persistent extends (DBIx::Class::Core, VRPipe::Base::Moose) { # be
                 # reattach it or inflation will break
                 $return->result_source->schema($schema);
             }
-            else {
+            elsif ($create != -1) { # create can be -1 to do a get without dieing on failure
                 die "no matching object exists in the database";
             }
             
@@ -1158,6 +1159,7 @@ class VRPipe::Persistent extends (DBIx::Class::Core, VRPipe::Base::Moose) { # be
         my $error_message_prefix = "Failed to $class\->_get(" . join(', ', @fa) . ')';
         
         my $row = $self->do_transaction($transaction, $error_message_prefix, $schema, 1);
+        return unless $row;
         
         $row->_from_non_persistent($from_non_persistent) if $from_non_persistent;
         return $row;

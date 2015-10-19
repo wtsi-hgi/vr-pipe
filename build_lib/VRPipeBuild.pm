@@ -119,9 +119,11 @@ sub required_modules {
         'Test::DBIx::Class'              => 0,
         'Test::Most'                     => 0,
         'Test::Strict'                   => 0,
+        'Text::Table'                    => 0,
         'Time::Format'                   => 0,
         'Twiggy::TLS'                    => 0,
-        'TryCatch'                       => 0
+        'TryCatch'                       => 0,
+        'URI::Escape'                    => 0
     };
 }
 

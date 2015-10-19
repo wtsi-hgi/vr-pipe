@@ -17,7 +17,7 @@ Sendu Bala <sb10@sanger.ac.uk>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2011, 2013 Genome Research Limited.
+Copyright (c) 2011, 2013, 2015 Genome Research Limited.
 
 This file is part of VRPipe.
 
@@ -53,6 +53,12 @@ role VRPipe::DataSourceRole {
         isa => 'HashRef'
     );
     
+    has 'debug' => (
+        is      => 'rw',
+        isa     => 'Bool',
+        default => 0
+    );
+    
     has '_handle' => (
         is  => 'rw',
         isa => 'Defined',
@@ -83,6 +89,7 @@ role VRPipe::DataSourceRole {
         # call the datasource method
         my $method = $self->method;
         $self->can($method) || $self->throw("Invalid method '$method' for " . ref($self));
+        warn "_generate_elements will call ", ref($self), "->$method()\n" if $self->debug;
         $self->$method(%{ $self->options }, handle => $handle);
     }
     
@@ -206,6 +213,27 @@ role VRPipe::DataSourceRole {
     }
     
     method _vals_different ($orig, $new) {
+        # treat empty refs, and refs filled with empty strings, as an empty
+        # string
+        if (ref $orig) {
+            my $empty = 0;
+            foreach my $val (@$orig) {
+                if (!defined $val || "$val" eq "") {
+                    $empty++;
+                }
+            }
+            $orig = "" if $empty == @$orig;
+        }
+        if (ref $new) {
+            my $empty = 0;
+            foreach my $val (@$new) {
+                if (!defined $val || "$val" eq "") {
+                    $empty++;
+                }
+            }
+            $new = "" if $empty == @$new;
+        }
+        
         if (!ref($orig) && !ref($new)) {
             if ($orig ne $new) {
                 return "$orig => $new";
@@ -232,6 +260,16 @@ role VRPipe::DataSourceRole {
         }
         
         return;
+    }
+    
+    method debug_log (Str $msg) {
+        if ($self->debug) {
+            warn $msg;
+        }
+        chomp($msg);
+        foreach my $setup (VRPipe::PipelineSetup->search({ datasource => $self->_datasource_id, active => 1 })) {
+            $setup->log_event($msg);
+        }
     }
 }
 

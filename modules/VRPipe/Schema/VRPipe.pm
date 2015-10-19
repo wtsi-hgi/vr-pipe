@@ -17,7 +17,7 @@ Sendu Bala <sb10@sanger.ac.uk>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2014 Genome Research Limited.
+Copyright (c) 2014, 2015 Genome Research Limited.
 
 This file is part of VRPipe.
 
@@ -46,6 +46,7 @@ class VRPipe::Schema::VRPipe with VRPipe::SchemaRole {
     my $graph      = VRPipe::Persistent::Graph->new();
     my $config     = VRPipe::Config->new();
     my $fse_labels = $graph->_labels('VRPipe', 'FileSystemElement');
+    my (undef, $fse_label) = split(/:/, $fse_labels);
     
     method schema_definitions {
         return [{
@@ -144,28 +145,37 @@ class VRPipe::Schema::VRPipe with VRPipe::SchemaRole {
         my $graph_p       = $self->get('Pipeline', { name => $p->name });
         my $graph_pm;
         unless ($graph_p) {
-            $graph_p = $self->add('Pipeline', { name => $p->name, description => $p->description });
-            
-            # create the pipeline members
-            my $previous_pm = $graph_p;
-            foreach my $sm (sort { $a->step_number <=> $b->step_number } $p->step_members) {
-                # get/create the step
-                my $step = $sm->step;
-                my $graph_step = $self->add('Step', { name => $step->name, description => $step->description });
+            $p->block_until_locked;
+            $graph_p = $self->get('Pipeline', { name => $p->name });
+            if ($graph_p) {
+                $graph_pm = $self->get('PipelineMember', { sql_id => $desired_sm_id });
+            }
+            else {
+                $graph_p = $self->add('Pipeline', { name => $p->name, description => $p->description });
                 
-                my $sm_id = $sm->id;
-                my $pm = $self->add('PipelineMember', { sql_id => $sm_id }, incoming => { type => 'next_step', node => $previous_pm });
-                $pm->relate_to($graph_step, 'step', replace => 1);
-                $previous_pm = $pm;
-                
-                if ($sm_id == $desired_sm_id) {
-                    $graph_pm = $pm;
+                # create the pipeline members
+                my $previous_pm = $graph_p;
+                foreach my $sm (sort { $a->step_number <=> $b->step_number } $p->step_members) {
+                    # get/create the step
+                    my $step = $sm->step;
+                    my $graph_step = $self->add('Step', { name => $step->name, description => $step->description });
+                    
+                    my $sm_id = $sm->id;
+                    my $pm = $self->add('PipelineMember', { sql_id => $sm_id }, incoming => { type => 'next_step', node => $previous_pm });
+                    $pm->relate_to($graph_step, 'step', replace => 1);
+                    $previous_pm = $pm;
+                    
+                    if ($sm_id == $desired_sm_id) {
+                        $graph_pm = $pm;
+                    }
                 }
             }
+            $p->unlock;
         }
         else {
             $graph_pm = $self->get('PipelineMember', { sql_id => $desired_sm_id });
         }
+        $graph_pm || $self->throw("Failed to get a PipelineMember with an sql id of $desired_sm_id (step " . $ss->stepmember->step_number . " of pipeline " . $p->name . ')');
         
         # create the datasource
         my $ds = $ps->datasource;
@@ -231,6 +241,27 @@ class VRPipe::Schema::VRPipe with VRPipe::SchemaRole {
     # paths, indicating the files are not on the local filesystem.
     method get_or_store_filesystem_paths (ClassName|Object $self: ArrayRef[Str|File] $paths!, Str :$protocol?, Bool :$return_cypher = 0, Bool :$only_get = 0) {
         my $return_leaves = defined wantarray();
+        
+        my $encryped_protocol;
+        if ($protocol && $protocol ne 'file:/') {
+            # encrypt everything past the first colon in case it contains a
+            # password
+            my ($pro, $text) = $protocol =~ /^([^:]+):(.*)/;
+            $text ||= '';
+            $text &&= $config->crypter->encrypt_hex($text);
+            $encryped_protocol = $pro . ':' . $text;
+        }
+        else {
+            $encryped_protocol = 'file:';
+        }
+        
+        # root node, which is / for local disc, and something like
+        # ftp://user:password@ftpserver:port/ for other protocols
+        my $root_basename = '/';
+        if ($encryped_protocol ne 'file:') {
+            $root_basename = $encryped_protocol . $root_basename;
+        }
+        
         my @cypher;
         foreach my $path (@$paths) {
             my $file       = file($path);
@@ -242,21 +273,9 @@ class VRPipe::Schema::VRPipe with VRPipe::SchemaRole {
             # either get existing dirs and file, or creates them with new uuids;
             # this bypasses the normal checking we have when using add() etc.,
             # but anything else would be too slow
-            
-            # root node, which is / for local disc, and something like
-            # ftp://user:password@ftpserver:port/ for other protocols
-            my $uuid          = $self->create_uuid();
-            my $root_basename = '/';
-            if ($protocol) {
-                # encrypt everything past the first colon in case it contains a
-                # password
-                my ($pro, $text) = $protocol =~ /^([^:]+):(.*)/;
-                $text ||= '';
-                $text &&= $config->crypter->encrypt_hex($text);
-                $root_basename = $pro . ':' . $text . $root_basename;
-            }
+            my $uuid   = $self->create_uuid();
             my %params = (root_basename => $root_basename, root_uuid => $uuid);
-            my $cypher = $only_get ? "MATCH (root:$fse_labels { basename: { param }.root_basename })" : "MERGE (root:$fse_labels { basename: { param }.root_basename }) ON CREATE SET root.uuid = { param }.root_uuid ";
+            my $cypher = $only_get ? "MATCH (root:$fse_label { basename: { param }.root_basename })" : "MERGE (root:$fse_labels { basename: { param }.root_basename }) ON CREATE SET root.uuid = { param }.root_uuid ";
             
             # sub dirs
             if ($basename) {
@@ -271,7 +290,7 @@ class VRPipe::Schema::VRPipe with VRPipe::SchemaRole {
                     $params{ $dir_num . '_uuid' }     = $uuid;
                     $developing_path .= "/$dir";
                     $params{ $dir_num . '_path' } = $developing_path;
-                    push(@chain, $only_get ? "-[:contains]->(`$dir_num`:$fse_labels { basename: { param }.`${dir_num}_basename` })" : "MERGE (`$previous`)-[:contains]->(`$dir_num`:$fse_labels { basename: { param }.`${dir_num}_basename`, path: { param }.`${dir_num}_path` }) ON CREATE SET `$dir_num`.uuid = { param }.`${dir_num}_uuid`");
+                    push(@chain, $only_get ? "-[:contains]->(`$dir_num` { basename: { param }.`${dir_num}_basename` })" : "MERGE (`$previous`)-[:contains]->(`$dir_num`:$fse_labels { basename: { param }.`${dir_num}_basename`, path: { param }.`${dir_num}_path` }) ON CREATE SET `$dir_num`.uuid = { param }.`${dir_num}_uuid`");
                     $previous = $dir_num;
                 }
                 $cypher .= join($only_get ? '' : ' ', @chain);
@@ -281,14 +300,14 @@ class VRPipe::Schema::VRPipe with VRPipe::SchemaRole {
                 $params{leaf_basename} = $basename;
                 $params{leaf_uuid}     = $uuid;
                 $params{leaf_path}     = "$path";
-                $cypher .= ($only_get ? "-[:contains]->(leaf:$fse_labels { basename: { param }.leaf_basename })" : " MERGE (`$previous`)-[:contains]->(leaf:$fse_labels { basename: { param }.leaf_basename, path: { param }.leaf_path }) ON CREATE SET leaf.uuid = { param }.leaf_uuid") . ($return_leaves ? ' RETURN leaf' : '');
+                $cypher .= ($only_get ? "-[:contains]->(leaf:$fse_label { basename: { leaf_basename } }) USING INDEX leaf:$fse_label(basename)" : " MERGE (`$previous`)-[:contains]->(leaf:$fse_labels { basename: { param }.leaf_basename, path: { param }.leaf_path }) ON CREATE SET leaf.uuid = { param }.leaf_uuid") . ($return_leaves ? ' RETURN leaf' : '');
             }
             else {
                 # we've only been asked for the root node
                 $cypher .= ' RETURN root' if $return_leaves;
             }
             
-            push(@cypher, [$cypher, { param => \%params }]);
+            push(@cypher, [$cypher, { param => \%params, $basename ? (leaf_basename => $basename, leaf_path => "$path") : () }]);
         }
         
         if ($return_cypher) {
@@ -432,11 +451,17 @@ class VRPipe::Schema::VRPipe with VRPipe::SchemaRole {
     # can't get around to work, so the else will copy/paste from SchemaRole :(
     method add (Str $label!, HashRef|ArrayRef[HashRef] $properties!, HashRef :$incoming?, HashRef :$outgoing?) {
         if ($label eq 'File') {
+            if ($incoming || $outgoing) {
+                $self->throw("incoming and outgoing not currently implemented when creating File nodes");
+                #*** non-trivial to implement...
+            }
+            
             my (@paths, $protocol);
             foreach my $prop (ref($properties) eq 'ARRAY' ? @$properties : ($properties)) {
                 push(@paths, $prop->{path});
                 $protocol = $prop->{protocol} if defined $prop->{protocol};
             }
+            
             return $self->get_or_store_filesystem_paths(\@paths, $protocol ? (protocol => $protocol) : ());
         }
         else {

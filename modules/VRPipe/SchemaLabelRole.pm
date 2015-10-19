@@ -18,7 +18,7 @@ Sendu Bala <sb10@sanger.ac.uk>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2014 Genome Research Limited.
+Copyright (c) 2014, 2015 Genome Research Limited.
 
 This file is part of VRPipe.
 
@@ -107,6 +107,21 @@ role VRPipe::SchemaLabelRole {
     
     method property (Str $property) {
         return $graph->node_property($self, $property);
+    }
+    
+    method unique_property {
+        my @uniques = $self->unique_properties();
+        if (@uniques == 1) {
+            return $graph->node_property($self, $uniques[0]);
+        }
+        else {
+            my @vals;
+            foreach my $unique (sort @uniques) {
+                my $val = $graph->node_property($self, $unique);
+                push(@vals, "$unique=$val");
+            }
+            return join(',', @vals);
+        }
     }
     
     method properties (Bool :$flatten_parents = 0) {
@@ -227,12 +242,40 @@ role VRPipe::SchemaLabelRole {
         return @nodes;
     }
     
-    method relate_to (HashRef|Object $node!, Str $type!, Bool :$selfish = 0, Bool :$replace = 0) {
-        $graph->relate($self, $node, type => $type, selfish => $selfish, replace => $replace);
+    method relate_to (HashRef|Object $node!, Str $type!, HashRef :$properties?, Bool :$selfish = 0, Bool :$replace = 0) {
+        $graph->relate($self, $node, type => $type, selfish => $selfish, replace => $replace, $properties ? (properties => $properties) : ());
     }
     
     method divorce_from (HashRef|Object $node!, Str $type?) {
         $graph->divorce($self, $node, $type ? (type => $type) : ());
+    }
+    
+    # direction is 'incoming' or 'outgoing'; not supplied means undirected.
+    # all => true will get the closest node along every path extending from
+    # the start node.
+    # properties is [['key', 'value', 0], [ ... ]], where third value is a booleon which if true means the value is treated as a regex
+    method closest (Str $namespace!, Str $label!, Str :$direction?, ArrayRef[ArrayRef] :$properties?, Int :$depth = 100, Bool :$all = 0) {
+        my @nodes = $graph->closest_nodes_with_label(
+            $self,
+            $namespace,
+            $label,
+            $direction  ? (direction  => $direction)  : (),
+            $properties ? (properties => $properties) : (),
+            depth => $depth,
+            all   => $all
+        );
+        
+        foreach my $node (@nodes) {
+            bless $node, 'VRPipe::Schema::' . $namespace . '::' . $label;
+        }
+        
+        if (@nodes) {
+            if (wantarray) {
+                return @nodes;
+            }
+            return $nodes[0];
+        }
+        return;
     }
 }
 

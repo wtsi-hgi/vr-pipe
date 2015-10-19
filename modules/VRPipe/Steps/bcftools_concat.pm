@@ -46,7 +46,7 @@ class VRPipe::Steps::bcftools_concat with VRPipe::StepRole {
             bcftools_concat_opts => VRPipe::StepOption->create(
                 description   => 'options to bcftools concat (excluding -f, -o and -O)',
                 optional      => 1,
-                default_value => '--ligate'
+                default_value => ''
             ),
             concat_sites_only => VRPipe::StepOption->create(
                 description   => 'do not output genotype information to the concatenated vcf file',
@@ -62,18 +62,13 @@ class VRPipe::Steps::bcftools_concat with VRPipe::StepRole {
                 description => 'after bcftools concat, option to pipe output vcf through another command, e.g. "vcf-annotate --fill-ICF" to fill AC, AN, and ICF annotations',
                 optional    => 1
             ),
-            tabix_exe => VRPipe::StepOption->create(
-                description   => 'path to your tabix exe',
-                optional      => 1,
-                default_value => 'tabix'
-            ),
         };
     }
     
     method inputs_definition {
         return {
             vcf_files => VRPipe::StepIODefinition->create(
-                type        => 'vcf',
+                type        => 'var',
                 max_files   => -1,
                 description => 'vcf files to concat',
                 metadata    => {
@@ -90,7 +85,6 @@ class VRPipe::Steps::bcftools_concat with VRPipe::StepRole {
         return sub {
             my $self          = shift;
             my $options       = $self->options;
-            my $tabix_exe     = $options->{tabix_exe};
             my $bcftools_exe  = $options->{bcftools_exe};
             my $bcftools_opts = $options->{bcftools_concat_opts};
             my $sites_only    = $options->{concat_sites_only};
@@ -118,33 +112,37 @@ class VRPipe::Steps::bcftools_concat with VRPipe::StepRole {
                         }
                     } # create temporary fofn of files to merge
                     my $merge_list = $self->output_file(basename => "merge_list.chr$chr.txt", type => 'txt', temporary => 1);
-                    my @sorted_vcf_files = sort { $a->metadata->{from} <=> $b->metadata->{from} } @vcf_files;
-                    $merge_list->create_fofn(\@sorted_vcf_files);
+                    my @sorted_vcf_files = sort { $a->metadata->{from} cmp $b->metadata->{from} } @vcf_files;
+                    my $file_list_id    = VRPipe::FileList->create(files => \@sorted_vcf_files)->id;
                     my $concat_meta     = $self->common_metadata(\@vcf_files);
                     my $concat_vcf      = $self->output_file(output_key => 'concat_vcf', basename => "merged.chr$chr.vcf.gz", type => 'vcf', metadata => $concat_meta);
-                    my $vcf_index       = $self->output_file(output_key => 'vcf_index', basename => "merged.chr$chr.vcf.gz.tbi", type => 'bin');
+                    my $vcf_index       = $self->output_file(output_key => 'vcf_index', basename => "merged.chr$chr.vcf.gz.tbi", type => 'bin', metadata => $concat_meta);
                     my $merge_list_path = $merge_list->path;
                     my $concat_vcf_path = $concat_vcf->path;
-                    my $cmd             = qq[($bcftools_exe concat$opts -f $merge_list_path$cut$filter | bgzip -c > $concat_vcf_path) && $tabix_exe -f -p vcf $concat_vcf_path];
-                    $self->dispatch([$cmd, $req, { output_files => [$concat_vcf, $merge_list, $vcf_index] }]);
+                    my $cmd             = qq[($bcftools_exe concat$opts -f $merge_list_path$cut$filter | bgzip -c > $concat_vcf_path) && $bcftools_exe index -ft $concat_vcf_path];
+                    my $this_cmd        = "use VRPipe::Steps::bcftools_concat; VRPipe::Steps::bcftools_concat->concat_and_check(q[$cmd], input_file_list => $file_list_id);";
+                    $self->dispatch_vrpipecode($this_cmd, $req, { output_files => [$concat_vcf, $merge_list, $vcf_index] });
                 }
             }
             else {
                 my $merge_list = $self->output_file(basename => "merge_list.txt", type => 'txt', temporary => 1);
+                
+                my $file_list_id;
                 if (@chroms) {
-                    my @sorted_vcf_files = sort { $a->metadata->{chrom} <=> $b->metadata->{chrom} || $a->metadata->{from} <=> $b->metadata->{from} } @{ $self->inputs->{vcf_files} };
-                    $merge_list->create_fofn(\@sorted_vcf_files);
+                    my @sorted_vcf_files = sort { $a->metadata->{chrom} cmp $b->metadata->{chrom} || $a->metadata->{from} <=> $b->metadata->{from} } @{ $self->inputs->{vcf_files} };
+                    $file_list_id = VRPipe::FileList->create(files => \@sorted_vcf_files)->id;
                 }
                 else {
-                    $merge_list->create_fofn($self->inputs->{vcf_files});
+                    $file_list_id = VRPipe::FileList->create(files => $self->inputs->{vcf_files})->id;
                 }
                 my $concat_meta     = $self->common_metadata($self->inputs->{vcf_files});
                 my $concat_vcf      = $self->output_file(output_key => 'concat_vcf', basename => "merged.vcf.gz", type => 'vcf', metadata => $concat_meta);
-                my $vcf_index       = $self->output_file(output_key => 'vcf_index', basename => "merged.vcf.gz.tbi", type => 'bin');
+                my $vcf_index       = $self->output_file(output_key => 'vcf_index', basename => "merged.vcf.gz.tbi", type => 'bin', metadata => $concat_meta);
                 my $merge_list_path = $merge_list->path;
                 my $concat_vcf_path = $concat_vcf->path;
-                my $cmd             = qq[($bcftools_exe concat$opts -f $merge_list_path$cut$filter | bgzip -c > $concat_vcf_path) && $tabix_exe -f -p vcf $concat_vcf_path];
-                $self->dispatch([$cmd, $req, { output_files => [$concat_vcf, $merge_list, $vcf_index] }]);
+                my $cmd             = qq[($bcftools_exe concat$opts -f $merge_list_path$cut$filter | bgzip -c > $concat_vcf_path) && $bcftools_exe index -ft $concat_vcf_path];
+                my $this_cmd        = "use VRPipe::Steps::bcftools_concat; VRPipe::Steps::bcftools_concat->concat_and_check(q[$cmd], input_file_list => $file_list_id);";
+                $self->dispatch_vrpipecode($this_cmd, $req, { output_files => [$concat_vcf, $merge_list, $vcf_index] });
             }
         
         };
@@ -177,6 +175,22 @@ class VRPipe::Steps::bcftools_concat with VRPipe::StepRole {
     
     method max_simultaneous {
         return 0;          # meaning unlimited
+    }
+    
+    method concat_and_check (ClassName|Object $self: Str $cmd_line!, Int :$input_file_list!) {
+        my ($input_path)  = $cmd_line =~ /-f (\S+)/;
+        my ($output_path) = $cmd_line =~ /(\S+)$/;
+        $input_path  || $self->throw("cmd_line [$cmd_line] was not constructed as expected");
+        $output_path || $self->throw("cmd_line [$cmd_line] was not constructed as expected");
+        
+        my $out_file = VRPipe::File->get(path => $output_path);
+        
+        my @input_files = VRPipe::FileList->get(id => $input_file_list)->files;
+        my $fofn = VRPipe::File->get(path => $input_path);
+        $fofn->create_fofn(\@input_files);
+        
+        $out_file->disconnect;
+        system($cmd_line) && $self->throw("failed to run [$cmd_line]");
     }
 
 }

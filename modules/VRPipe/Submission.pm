@@ -26,7 +26,7 @@ Sendu Bala <sb10@sanger.ac.uk>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2011-2013 Genome Research Limited.
+Copyright (c) 2011-2015 Genome Research Limited.
 
 This file is part of VRPipe.
 
@@ -140,27 +140,25 @@ class VRPipe::Submission extends VRPipe::Persistent {
         
         # lock the Sub before trying to claim
         $self->lock || return 3;
-        
-        # maintain our lock so their timeouts are auto-refreshed until the
-        # instances are destroyed (we'll return the job instance so the lock
-        # generated when we run isn't lost)
-        $self->maintain_lock;
-        my $job = $self->job;
+        $self->reselect_values_from_db;
+        my $job            = $self->job;
+        my $ss             = $self->stepstate;
+        my $ps             = $ss->pipelinesetup;
+        my %log_event_args = (dataelement => $ss->dataelement->id, stepstate => $ss->id, submission => $self->id, job => $job->id);
         
         my $transaction = sub {
-            my $ss             = $self->stepstate;
-            my $ps             = $ss->pipelinesetup;
-            my %log_event_args = (dataelement => $ss->dataelement->id, stepstate => $ss->id, submission => $self->id, job => $job->id);
             # first check if the job has already started or finished
             if ($self->done || $self->failed || (defined $job->exit_code && $job->end_time)) {
                 if (!($self->done || $self->failed)) {
                     # the job ran under a different submission; we just need to
                     # update this submission
                     if ($job->ok) {
+                        $ps->log_event("claim_and_run() found that the Job ran under a different submission, and the job is done fine", %log_event_args);
                         $self->_done(1);
                         $self->_failed(0);
                     }
                     else {
+                        $ps->log_event("claim_and_run() found that the Job ran under a different submission, and the job failed", %log_event_args);
                         $self->_done(0);
                         $self->_failed(1);
                     }
@@ -175,7 +173,7 @@ class VRPipe::Submission extends VRPipe::Persistent {
                 return;
             }
             elsif ($job->start_time) {
-                if ($job->locked) {
+                if ($job->is_alive) {
                     $response = 3;
                     $ps->log_event("claim_and_run() found that the Job had already started and is currently alive", %log_event_args);
                     return;
@@ -227,7 +225,7 @@ class VRPipe::Submission extends VRPipe::Persistent {
         };
         $self->do_transaction($transaction, "Failed when trying to claim and run");
         
-        $self->unlock unless $response == 1;
+        $self->unlock;
         return ($response, $job);
     }
     

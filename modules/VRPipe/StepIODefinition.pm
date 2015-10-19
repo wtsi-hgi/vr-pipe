@@ -47,7 +47,7 @@ this program. If not, see L<http://www.gnu.org/licenses/>.
 
 use VRPipe::Base;
 
-class VRPipe::StepIODefinition extends VRPipe::Persistent {
+class VRPipe::StepIODefinition extends VRPipe::PersistentLocklessCreate {
     has 'type' => (
         is     => 'rw',
         isa    => FileType,

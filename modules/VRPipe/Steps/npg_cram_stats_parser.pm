@@ -45,7 +45,7 @@ class VRPipe::Steps::npg_cram_stats_parser with VRPipe::StepRole {
     
     method options_definition {
         return {
-            qc_file_suffixes => VRPipe::StepOption->create(description => 'The file name suffixes of the qc files you wish to parse, comma separated.',                                                     default_value => '_F0x900.stats,.genotype.json,.verify_bam_id.json'),
+            qc_file_suffixes => VRPipe::StepOption->create(description => 'The file name suffixes of the qc files you wish to parse, comma separated.',                                                     default_value => '_F0xB00.stats,.genotype.json,.verify_bam_id.json'),
             sample_id_type   => VRPipe::StepOption->create(description => 'The type of sample identifier to check in the cram file header; allowed values are id, public_name, supplier_name or accession', default_value => 'accession')
         };
     }
@@ -166,7 +166,6 @@ class VRPipe::Steps::npg_cram_stats_parser with VRPipe::StepRole {
         }
         
         my $date = time();
-        
         if ($stats_graph_node) {
             # parse the stats file (don't use our bamcheck parser so we just
             # store whatever new or changed field is in the stats file)
@@ -174,6 +173,8 @@ class VRPipe::Steps::npg_cram_stats_parser with VRPipe::StepRole {
             my %stats = ();
             my $mode  = 'normal';
             my $opts;
+            my $insertion_counts = 0;
+            my $deletion_counts  = 0;
             while (<$fh>) {
                 if (/^# The command line was:\s+stats\s+(.+)/) {
                     $opts = $1;
@@ -196,8 +197,14 @@ class VRPipe::Steps::npg_cram_stats_parser with VRPipe::StepRole {
                         $stats{'targeted total sequences'} = delete $stats{'raw total sequences'};
                     }
                 }
+                elsif (/^ID\s+(\S+)\s+(\S+)\s+(\S+)/) {
+                    $insertion_counts += $2;
+                    $deletion_counts  += $3;
+                }
             }
             $stats_graph_node->close;
+            $stats{'number of insertions'} = $insertion_counts;
+            $stats{'number of deletions'}  = $deletion_counts;
             
             unless ($mode eq 'rmdup') {
                 # when not using -d we can still add some rmdup stats
@@ -299,7 +306,7 @@ class VRPipe::Steps::npg_cram_stats_parser with VRPipe::StepRole {
         
         # compare the cram header to what we know about the sequencing
         my $header_lines       = $cram_file->header_lines;                                                                                                       # automagically works with irods files if HTSLIB has been compiled with irods support
-        my $props              = $graph_file->properties(flatten_parents => 1);
+        my $props              = $schema->node_and_hierarchy_properties($graph_file);
         my %rg_key_to_prop_key = (LB => ['vrtrack_library_id', 'vrtrack_library_name'], SM => 'vrtrack_sample_accession', DS => "vrtrack_study_$sample_id_type");
         my (%diffs, $ref_md5s);
         foreach (@$header_lines) {
@@ -359,6 +366,9 @@ class VRPipe::Steps::npg_cram_stats_parser with VRPipe::StepRole {
         my $fh   = $node->openr;
         my $str  = do { local $/; <$fh> };
         $node->close;
+        unless ($str) {
+            die "Could not read any content from ", $node->path, "\n";
+        }
         return $json->decode($str);
     }
 }

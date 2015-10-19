@@ -10,7 +10,7 @@ use EV;
 use AnyEvent;
 
 BEGIN {
-    use Test::Most tests => 179;
+    use Test::Most tests => 175;
     use VRPipeTest;
     
     use_ok('VRPipe::Persistent');
@@ -32,20 +32,6 @@ is_deeply [$schedulers[2]->id, $schedulers[2]->type, $schedulers[2]->output_root
 my $output_dir = dir($schedulers[2]->output_root, 'persistent_test_output');
 $schedulers[2]->remove_tree($output_dir);
 $schedulers[2]->make_path($output_dir);
-
-my $sidtosub = VRPipe::SidToSub->create(farm => 'foo', req_id => 1, sid => 1, aid => 1);
-is_deeply [$sidtosub->sid, $sidtosub->sub_id, $sidtosub->assignment_time], [1, undef, undef], 'SidToSub could be created and returns values, with sub_id and assignment_time defaulting to undef';
-$sidtosub->sub_id(1);
-$sidtosub->update;
-is $sidtosub->sub_id, 1, 'setting sub_id works';
-my $assignment_time = $sidtosub->assignment_time;
-ok $assignment_time, 'it also set assignment_time';
-sleep(1);
-$sidtosub->sub_id(undef);
-$sidtosub->update;
-my $new_time = $sidtosub->assignment_time;
-my $assignment_changed = $new_time->epoch > $assignment_time->epoch ? 1 : 0;
-is_deeply [$sidtosub->sub_id, $assignment_changed], [undef, 1], 'undeffing sub_id updated assignment_time';
 
 my @files;
 my $input1_path = file($output_dir, 'input1.txt');
@@ -567,8 +553,11 @@ is $jobs[2]->end_time->epoch, $end_time, 'running a job again does nothing';
 ok !$jobs[2]->locked, 'the job is unlocked after returning from run() early';
 ok $jobs[2]->reset_job, 'could reset a job';
 is_deeply [$jobs[2]->ok, $jobs[2]->exit_code, $jobs[2]->pid, $jobs[2]->host, $jobs[2]->user, $jobs[2]->start_time, $jobs[2]->end_time], [0, undef, undef, undef, undef, undef, undef], 'after reset, job has cleared values';
-my $own_pid   = $$;
+my $jid = $jobs[2]->id;
+undef $jobs[2];
+$jobs[2] = VRPipe::Job->get(id => $jid);
 my $child_pid = fork();
+
 if ($child_pid) {
     my $cmd_pid;
     for (1 .. 10) {
@@ -648,9 +637,11 @@ exit;
 sub run_job {
     my $job = shift;
     
-    my $watcher = EV::timer 0, 2, sub {
+    my $watcher;
+    $watcher = EV::timer 0, 2, sub {
         $job->reselect_values_from_db;
         if ($job->end_time) {
+            undef $watcher;
             EV::unloop;
         }
     };
@@ -663,7 +654,8 @@ sub wait_until_done {
     
     my $count = 0;
     my ($sub, $job);
-    my $watcher = EV::timer 0, 2, sub {
+    my $watcher;
+    $watcher = EV::timer 0, 2, sub {
         $count++;
         if ($count > 500) {
             EV::unloop;
@@ -672,6 +664,7 @@ sub wait_until_done {
         if (!$sub) {
             $sub = pop(@subs);
             unless ($sub) {
+                undef $watcher;
                 EV::unloop;
                 return;
             }

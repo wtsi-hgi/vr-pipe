@@ -33,7 +33,7 @@ Sendu Bala <sb10@sanger.ac.uk>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2011-2014 Genome Research Limited.
+Copyright (c) 2011-2015 Genome Research Limited.
 
 This file is part of VRPipe.
 
@@ -273,13 +273,12 @@ class VRPipe::StepState extends VRPipe::Persistent {
         }
     }
     
-    method start_over (Bool :$only_failed = 0) {
+    method start_over (Bool :$only_failed = 0, Bool :$no_trigger = 0) {
         my $log_self = 'StepState->start_over';
         $log_self .= '(only_failed => 1)' if $only_failed;
         $self->pipelinesetup->log_event("$log_self was called", stepstate => $self->id, dataelement => $self->dataelement->id, record_stack => 1);
         
         $self->block_until_locked;
-        $self->maintain_lock;
         
         # before doing anything, record which output files we'll need to delete,
         # but don't actually delete anything until we've done all the db
@@ -340,6 +339,12 @@ class VRPipe::StepState extends VRPipe::Persistent {
         # now unlink the output files
         foreach my $file (@files_to_unlink) {
             $file->unlink;
+        }
+        
+        unless ($no_trigger) {
+            # queue ourselves to be triggered again
+            $self->_in_memory->enqueue('trigger', $self->pipelinesetup->id . ':' . $self->dataelement->id);
+            $self->pipelinesetup->log_event("$log_self enqueued a trigger for " . $self->pipelinesetup . ':' . $self->dataelement, stepstate => $self->id, dataelement => $self->dataelement->id);
         }
         
         $self->unlock;

@@ -13,7 +13,7 @@ Sendu Bala <sb10@sanger.ac.uk>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (c) 2014 Genome Research Limited.
+Copyright (c) 2014, 2015 Genome Research Limited.
 
 This file is part of VRPipe.
 
@@ -36,6 +36,7 @@ use VRPipe::Base;
 class VRPipe::Steps::vrtrack_populate_from_vrpipe_metadata extends VRPipe::Steps::vrtrack_update {
     use VRPipe::Persistent::InMemory;
     use Path::Class;
+    use VRPipe::Schema;
     
     around options_definition {
         return {
@@ -101,9 +102,9 @@ class VRPipe::Steps::vrtrack_populate_from_vrpipe_metadata extends VRPipe::Steps
         }
         $file->disconnect;
         
-        if ($type =~ /bam|cram/ && $meta->{total_reads} < 1000) {
-            # ignore ~empty bam files
-            return 1;
+        if ($type =~ /bam|cram/ && $meta->{total_reads} < 1) {
+            # ignore empty bam files
+            return 0;
         }
         
         # we can't populate vrtrack without some essential metadata
@@ -114,7 +115,22 @@ class VRPipe::Steps::vrtrack_populate_from_vrpipe_metadata extends VRPipe::Steps
         # we can't represent the same sample being for 2 different projects in
         # VRTrack
         if (ref($meta->{study_id}) && @{ $meta->{study_id} } > 1) {
-            die "file $path belongs to more than one study (@{$meta->{study_id}}), which VRTrack can't cope with\n";
+            # see if there's a preferred study in the graph db
+            my $schema     = VRPipe::Schema->create("VRPipe");
+            my $graph_file = $schema->get('File', { path => $file->protocolless_path, protocol => $file->protocol });
+            my $ok         = 0;
+            if ($graph_file) {
+                $schema = VRPipe::Schema->create("VRTrack");
+                my $hierarchy = $schema->get_sequencing_hierarchy($graph_file, just_preferred_study => 1);
+                if ($hierarchy && defined $hierarchy->{study}) {
+                    my $study = $hierarchy->{study};
+                    $meta->{study_id}    = $study->id;
+                    $meta->{study_title} = $study->name;
+                    $ok                  = 1;
+                }
+            }
+            
+            die "file $path belongs to more than one study (@{$meta->{study_id}}), which VRTrack can't cope with\n" unless $ok;
         }
         
         my %type_to_vrtrack_type = (bam => 4, cram => 6, gtc => 7, idat => 8);
@@ -148,7 +164,6 @@ class VRPipe::Steps::vrtrack_populate_from_vrpipe_metadata extends VRPipe::Steps
         my $im       = VRPipe::Persistent::InMemory->new;
         my $lock_key = "vrtrack_populate.$meta->{study_id}";
         $im->block_until_locked($lock_key);
-        $im->maintain_lock($lock_key);
         
         my $worked = $vrtrack->transaction(
             sub {
@@ -252,6 +267,26 @@ class VRPipe::Steps::vrtrack_populate_from_vrpipe_metadata extends VRPipe::Steps
                 $vrlane->library_id($vrlibrary->id);
                 $vrlane->update;
                 
+                # get/create a seq_tech
+                my $platform = $meta->{platform} || 'SLX';
+                my $seq_tech = $vrlibrary->seq_tech($platform);
+                unless ($seq_tech) {
+                    $seq_tech = $vrlibrary->add_seq_tech($platform);
+                    $seq_tech->update;
+                    $vrlibrary->seq_tech_id($seq_tech->id);
+                }
+                $vrlibrary->update;
+                
+                # get/create a seq_centre
+                my $center_name = $meta->{center_name} || 'SC';
+                my $seq_centre = $vrlibrary->seq_centre($center_name);
+                unless ($seq_centre) {
+                    $seq_centre = $vrlibrary->add_seq_centre($center_name);
+                    $seq_centre->update;
+                    $vrlibrary->seq_centre_id($seq_centre->id);
+                }
+                $vrlibrary->update;
+                
                 # get/create the project
                 my $vrproject = VRTrack::Project->new_by_ssid($vrtrack, $meta->{study_id});
                 my $study_title = $meta->{study_title};
@@ -333,6 +368,16 @@ class VRPipe::Steps::vrtrack_populate_from_vrpipe_metadata extends VRPipe::Steps
                 
                 $vrsample->individual_id($vrindividual->id);
                 $vrsample->update;
+                
+                # get/create a population
+                my $population = $meta->{population} || 'Population';
+                my $vrpopulation = $vrindividual->population($population);
+                unless ($vrpopulation) {
+                    $vrpopulation = $vrindividual->add_population($population);
+                    $vrpopulation->update;
+                    $vrindividual->population_id($vrpopulation->id);
+                }
+                $vrindividual->update;
             }
         );
         
@@ -341,6 +386,8 @@ class VRPipe::Steps::vrtrack_populate_from_vrpipe_metadata extends VRPipe::Steps
         unless ($worked) {
             $self->throw($vrtrack->{transaction_error});
         }
+        
+        return 1;
     }
 }
 

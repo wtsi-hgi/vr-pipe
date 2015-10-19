@@ -4,7 +4,7 @@ use warnings;
 use Path::Class;
 
 BEGIN {
-    use Test::Most tests => 146;
+    use Test::Most tests => 169;
     use VRPipeTest;
     use_ok('VRPipe::Schema');
     use_ok('VRPipe::File');
@@ -20,6 +20,7 @@ $sample = $schema->add('Sample', { name => 's1', public_name => 'public_sone' })
 is_deeply [$sample->{id}, $sample->{properties}], [$orig_sample_id, { name => 's1', public_name => 'public_sone' }], 'add() twice on the same unique property does an update with labels that keep their history';
 $sample = $schema->add('Sample', { name => 's1', public_name => 'public_s1' });
 is_deeply [$sample->{id}, $sample->{properties}, $sample->changed()], [$orig_sample_id, { name => 's1', public_name => 'public_s1' }, { public_name => ['public_sone', 'public_s1'] }], 'add() again on the same unique property with a changed property does really update it, and we can find out what the previous value was';
+is $sample->unique_property, 's1', 'unique_property() works';
 
 # Sample is marked to store history but EBI_Submission is not, so repeat some of
 # the above tests to cover both code paths
@@ -28,7 +29,7 @@ my $orig_ebi_id = $ebisub->node_id();
 $ebisub = $schema->add('EBI_Submission', { acc => 'ebi1', sub_date => 67890 });
 is_deeply [$ebisub->{id}, $ebisub->{properties}, $ebisub->changed()], [$orig_ebi_id, { acc => 'ebi1', sub_date => 67890 }], 'add() twice on the same unique property with different other properties does an update on a history-less label';
 
-ok my @libs = $schema->add('Library', [{ id => 'l1' }, { id => 'l2' }], incoming => { type => 'prepared', node => $sample }), 'add() worked with incoming option, and for adding more than 1 at a time';
+ok my @libs = $schema->add('Library', [{ id => 'l1', center_name => 'sanger1' }, { id => 'l2' }], incoming => { type => 'prepared', node => $sample }), 'add() worked with incoming option, and for adding more than 1 at a time';
 
 throws_ok { $schema->add('Foo', { foo => 'bar' }) } qr/'Foo' isn't a valid label for schema VRTrack/, 'add() throws when given an invalid label';
 throws_ok { $schema->add('Sample', { id => '1' }) } qr/Parameter 'name' must be supplied/, 'add() throws when not given a required parameter';
@@ -55,10 +56,10 @@ is $lib1->name, 'libone', 'auto-generated property method worked to set';
 $lib1 = $schema->get('Library', { id => 'l1' });
 is $lib1->name, 'libone', 'the set was really in the database';
 
-is_deeply $lib1->properties(flatten_parents => 1), { id => 'l1', name => 'libone', sample_name => 's1', sample_public_name => 'public_s1' }, 'properties() method worked with flatten_parents';
+is_deeply $lib1->properties(flatten_parents => 1), { id => 'l1', name => 'libone', sample_name => 's1', sample_public_name => 'public_s1', center_name => 'sanger1' }, 'properties() method worked with flatten_parents';
 $lib1->add_properties({ name => 'lib1', tag => 'ATG' });
 $lib1 = $schema->get('Library', { id => 'l1' });
-is_deeply $lib1->properties(), { id => 'l1', name => 'lib1', tag => 'ATG' }, 'add_properties() method worked';
+is_deeply $lib1->properties(), { id => 'l1', name => 'lib1', center_name => 'sanger1', tag => 'ATG', }, 'add_properties() method worked';
 is $lib1->parent_property('sample_name'), 's1', 'parent_property() worked';
 
 throws_ok { $sample->add_properties({ foo  => 'bar' }) } qr/Property 'foo' supplied, but that isn't defined in the schema for VRTrack::Sample/,           'add_properties() throws when given an invalid property';
@@ -122,13 +123,34 @@ $sample->relate_to($lib3, 'prepared');
 @related = $lib3->related();
 is_deeply [sort map { $_->node_id } @related], [$sample->node_id], 'relate_to() worked';
 is $related[0]->name, 's1', 'related() returns working objects';
+my $lib4 = $schema->add('Library', { id => 'l4', center_name => 'sanger' });
+$sample->relate_to($lib4, 'prepared');
 my $lane1 = $schema->add('Lane', { unique => 'lane1', lane => 1 });
 $lib3->relate_to($lane1, 'sequenced');
 @related = $lane1->related(incoming => {});
 is_deeply [sort map { $_->node_id } @related], [$lib3->node_id], 'related() worked with incoming specified';
-$lib1->relate_to($lane1, 'sequenced', selfish => 1);
+$lib1->relate_to($lane1, 'sequenced', selfish => 1, properties => { machine => 'big_one' });
 @related = $lane1->related(incoming => {});
 is_deeply [sort map { $_->node_id } @related], [$lib1->node_id], 'relate_to(selfish => 1) worked';
+my ($r) = @{ $graph->related($lib1, undef, undef, { type => 'sequenced' })->{relationships} };
+is $r->{properties}->{machine}, 'big_one', 'relate_to(properties => {}) worked';
+
+my $closest = $sample->closest('VRTrack', 'Library', direction => 'outgoing');
+like $closest->id, qr/l[12]/, 'closest(outgoing) worked';
+my @closest = $sample->closest('VRTrack', 'Library', direction => 'outgoing', all => 1);
+is_deeply [sort map { $_->id } @closest], ['l1', 'l2', 'l3', 'l4'], 'closest(all) worked';
+@closest = $sample->closest('VRTrack', 'Library', direction => 'outgoing', all => 1, properties => [['center_name', 'sanger']]);
+is_deeply [sort map { $_->id } @closest], ['l4'], 'closest(all) with a specified property limit worked';
+@closest = $sample->closest('VRTrack', 'Library', direction => 'outgoing', all => 1, properties => [['center_name', 'san\wer.*', 1]]);
+is_deeply [sort map { $_->id } @closest], ['l1', 'l4'], 'closest(all) with a regex property limit worked';
+@closest = $sample->closest('VRTrack', 'Library', direction => 'outgoing', all => 1, properties => [['center_name', 'san\wer.*', 1], ['id', 'l[12]', 1]]);
+is_deeply [sort map { $_->id } @closest], ['l1'], 'closest(all) with 2 regex property limits worked';
+$closest = $lib3->closest('VRTrack', 'Sample', direction => 'outgoing');
+is $closest, undef, 'closest(outgoing) returns nothing when searching for non-existing';
+$closest = $lib3->closest('VRTrack', 'Sample', direction => 'incoming');
+is $closest->name, 's1', 'closest(incoming) worked';
+$closest = $lib3->closest('VRTrack', 'Sample');
+is $closest->name, 's1', 'closest() worked';
 
 # make sure we delete history nodes when we delete a schema node
 $lib3->tag('A');
@@ -186,6 +208,11 @@ my @second_queue = ($schema->get('Sample', { name => 'enqueue1' }), $schema->get
 is_deeply [[sort map { $_->name() } @second_queue], [sort map { $_->node_id() } @second_queue], $second_queue[0]->public_name], [['enqueue1', 'enqueue2', 'enqueue3'], [$expected_queue[0]->node_id, $expected_queue[1]->node_id, $second_queue[2]->node_id], 'enqueue1_public_b'], 'dispatch_queue() was able to update, leave alone and add a new node';
 @history = $second_queue[0]->property_history();
 is_deeply [$history[0]->{properties}->{public_name}, $history[1]->{properties}->{public_name}], ['enqueue1_public_b', 'enqueue1_public_a'], 'history was maintained on a node updated via dispatch_queue()';
+
+# test search()
+my @samples = $schema->search('Sample', { name => '.+queue\d+' });
+is scalar(@samples), 3, 'search() worked';
+is_deeply [sort map { $_->name() } @samples], ['enqueue1', 'enqueue2', 'enqueue3'], 'search() returned the correct blessed objects';
 
 # before creating the VRPipe schema, test that related() on a VRTrack node can
 # return fully-functional VRPipe nodes
@@ -245,6 +272,7 @@ is_deeply [$vrpipe->parent_filesystemelement($sym_path)->node_id, $vrpipe->paren
 my $lrpath     = '/a/path/that/could/be/local/or/remote.txt';
 my $local_file = $vrpipe->add('File', { path => $lrpath });
 my $irods_file = $vrpipe->add('File', { path => $lrpath, protocol => 'irods:' });
+ok $gotten_file = $vrpipe->get('File', { path => $irods_file->protocolless_path, protocol => $irods_file->protocol }), 'you can get() an irods file using its protocol and protocolless_path';
 isnt $local_file->uuid, $irods_file->uuid, 'local and remote files with the same absolute paths have different uuids';
 my $lf = $vrpipe->get('File', { path => $lrpath });
 is $lf->uuid, $local_file->uuid, 'you can get a local file that shares the same path with a remote file';
@@ -268,6 +296,7 @@ is $ff->uuid, $ftp_file_uuid, 'if your ftp password changed, you could just move
 is $ff->protocol, 'ftp://user:changedpass@host:port', 'protocol() works for an ftp file';
 is $ff->protocol(1), 'ftp', 'protocol(1) works for an ftp file';
 is $local_file->protocol, 'file:/', 'protocol() works for a local file';
+ok $gotten_file = $vrpipe->get('File', { path => $local_file->protocolless_path, protocol => $local_file->protocol }), 'you can get() a local file using its protocol and protocolless_path';
 is $local_file->protocol(1), 'file', 'protocol(1) works for a local file';
 my $real_local_path = file(qw(t data file.txt))->absolute->stringify;
 my $real_local_file = $vrpipe->add('File', { path => $real_local_path });
@@ -377,5 +406,91 @@ $bps->add_properties({ public_name => 'pn' });
 @history = $bps->property_history('public_name');
 @history_properties = map { $_->{properties} } @history;
 is_deeply [@history_properties], [{ public_name => 'pn' }, {}, { public_name => ['b', 'p', 's'] }], 'property_history() works correctly on a property that had at one point been removed';
+
+# test get_sequencing_hierarchy; first create more hierarchies, some of which
+# have samples belonging to more than 1 study
+$schema->ensure_sequencing_hierarchy(lane => 'esh_lane2', library => 'esh_library2', sample => 'esh_sample2', study => 'esh_study1', group => 'esh_group1', taxon => 'esh_taxon1');
+$hierarchy = $schema->ensure_sequencing_hierarchy(lane => 'esh_lane3', library => 'esh_library3', sample => 'esh_sample2', study => 'esh_study2', group => 'esh_group1', taxon => 'esh_taxon1');
+$schema->ensure_sequencing_hierarchy(lane => 'esh_lane4', library => 'esh_library4', sample => 'esh_sample2', study => 'esh_study3', group => 'esh_group1', taxon => 'esh_taxon1');
+($rel) = @{ $graph->related($hierarchy->{study}, undef, undef, {})->{relationships} };
+$graph->relationship_set_properties($rel, { preferred => 1 });
+my $lane3_file = $vrpipe->add('File', { path => '/seq/3/3.bam' });
+$hierarchy->{lane}->relate_to($lane3_file, 'aligned');
+ok $hierarchy = $schema->get_sequencing_hierarchy($lane3_file), 'get_sequencing_hierarchy() seemed to work';
+%hierarchy_props = map { $_ => $hierarchy->{$_}->properties } keys %{$hierarchy};
+is_deeply \%hierarchy_props, { lane => { unique => 'esh_lane3', lane => 'esh_lane3' }, library => { id => 'esh_library3' }, sample => { name => 'esh_sample2' }, study => { id => 'esh_study2' }, taxon => { id => 'esh_taxon1' } }, 'get_sequencing_hierarchy() returned the correct nodes for a bam file, including the preferred study';
+$schema->ensure_sequencing_hierarchy(lane => 'esh_lane5', library => 'esh_library5', sample => 'esh_sample5', study => 'esh_study5', group => 'esh_group2', taxon => 'esh_taxon1');
+$hierarchy = $schema->ensure_sequencing_hierarchy(lane => 'esh_lane6', library => 'esh_library6', sample => 'esh_sample5', study => 'esh_study6', group => 'esh_group2', taxon => 'esh_taxon1');
+$schema->ensure_sequencing_hierarchy(lane => 'esh_lane7', library => 'esh_library7', sample => 'esh_sample5', study => 'esh_study7', group => 'esh_group2', taxon => 'esh_taxon1');
+my $lane6_file = $vrpipe->add('File', { path => '/seq/6/6.bam' });
+$hierarchy->{lane}->relate_to($lane6_file, 'aligned');
+$hierarchy = $schema->get_sequencing_hierarchy($lane6_file);
+my $hstudy = delete $hierarchy->{study};
+%hierarchy_props = map { $_ => $hierarchy->{$_}->properties } keys %{$hierarchy};
+is_deeply \%hierarchy_props, { lane => { unique => 'esh_lane6', lane => 'esh_lane6' }, library => { id => 'esh_library6' }, sample => { name => 'esh_sample5' }, taxon => { id => 'esh_taxon1' } }, 'get_sequencing_hierarchy() returned the correct nodes for another bam file';
+like $hstudy->id, qr/esh_study[567]/, 'since no preferred study was specified, a random one was returned';
+$hierarchy = $schema->ensure_sequencing_hierarchy(lane => 'esh_lane8', library => 'esh_library8', sample => 'esh_sample8', study => 'esh_study8', group => 'esh_group3', taxon => 'esh_taxon1');
+my $lane8_file = $vrpipe->add('File', { path => '/seq/8/8.bam' });
+$hierarchy->{lane}->relate_to($lane8_file, 'aligned');
+$hierarchy = $schema->get_sequencing_hierarchy($lane8_file);
+%hierarchy_props = map { $_ => $hierarchy->{$_}->properties } keys %{$hierarchy};
+is_deeply \%hierarchy_props, { lane => { unique => 'esh_lane8', lane => 'esh_lane8' }, library => { id => 'esh_library8' }, sample => { name => 'esh_sample8' }, study => { id => 'esh_study8' }, taxon => { id => 'esh_taxon1' } }, 'get_sequencing_hierarchy() returned the correct nodes for another bam file, in the simple case of there being only 1 study for the sample';
+
+my $hierarchy_meta = $schema->node_and_hierarchy_properties($lane8_file);
+is_deeply $hierarchy_meta, { vrtrack_lane_unique => 'esh_lane8', vrtrack_lane_lane => 'esh_lane8', vrtrack_library_id => 'esh_library8', vrtrack_sample_name => 'esh_sample8', vrtrack_study_id => 'esh_study8', vrtrack_taxon_id => 'esh_taxon1' }, 'node_and_hierarchy_properties() worked';
+
+# test file_qc_nodes() by first manually adding the nodes that
+# npg_cram_stats_parser step adds
+my $qc_file = $vrpipe->add('File', { path => '/seq/8/8.stats' });
+$lane8_file->relate_to($qc_file, 'qc_file');
+$schema->add(
+    'Bam_Stats',
+    {
+        mode                  => 'normal',
+        options               => '-opt',
+        date                  => 1443015733,
+        'reads QC failed'     => 99,
+        'raw total sequences' => 10001
+    },
+    incoming => { type => 'summary_stats', node => $qc_file }
+);
+$qc_file = $vrpipe->add('File', { path => '/seq/8/8.genotype.json' });
+$lane8_file->relate_to($qc_file, 'qc_file');
+$schema->add(
+    'Genotype',
+    {
+        date                 => 1443015733,
+        pass                 => 1,
+        expected_sample_name => 'foo',
+        matched_sample_name  => 'foo'
+    },
+    incoming => { type => 'genotype_data', node => $qc_file }
+);
+$qc_file = $vrpipe->add('File', { path => '/seq/qc/8/8.verify_bam_id.json' });
+$lane8_file->relate_to($qc_file, 'qc_file');
+$schema->add(
+    'Verify_Bam_ID',
+    {
+        date    => 1443015733,
+        pass    => 0,
+        freemix => 'foo'
+    },
+    incoming => { type => 'verify_bam_id_data', node => $qc_file }
+);
+
+my $qc_nodes = $schema->file_qc_nodes($lane8_file);
+my %qc_props = map { $_ => $qc_nodes->{$_}->properties } keys %{$qc_nodes};
+delete $qc_props{bam_stats}->{uuid};
+delete $qc_props{genotype}->{uuid};
+delete $qc_props{verify_bam_id}->{uuid};
+is_deeply \%qc_props, { bam_stats => { mode => 'normal', options => '-opt', date => 1443015733, 'reads QC failed' => 99, 'raw total sequences' => 10001 }, genotype => { date => 1443015733, pass => 1, expected_sample_name => 'foo', matched_sample_name => 'foo' }, verify_bam_id => { date => 1443015733, pass => 0, freemix => 'foo' } }, 'file_qc_nodes() returned the correct nodes';
+
+my $vrtrack_meta = $schema->vrtrack_metadata($lane8_file);
+is_deeply $vrtrack_meta, { %{$hierarchy_meta}, vrtrack_bam_stats_mode => 'normal', vrtrack_bam_stats_options => '-opt', vrtrack_bam_stats_date => 1443015733, 'vrtrack_bam_stats_reads QC failed' => 99, 'vrtrack_bam_stats_raw total sequences' => 10001, vrtrack_genotype_date => 1443015733, vrtrack_genotype_pass => 1, vrtrack_genotype_expected_sample_name => 'foo', vrtrack_genotype_matched_sample_name => 'foo', vrtrack_verify_bam_id_date => 1443015733, vrtrack_verify_bam_id_pass => 0, vrtrack_verify_bam_id_freemix => 'foo' }, 'vrtrack_metadata() worked';
+
+# also test the pass-through from VRPipe::File to get vrtrack metadata
+$vrfile = VRPipe::File->create(path => '/seq/8/8.bam');
+$vrfile->add_metadata({ sql_meta => 'sql_value' });
+is_deeply $vrfile->metadata(undef, include_vrtrack => 1), { %{$vrtrack_meta}, sql_meta => 'sql_value' }, 'VRPipe::File->metadata(undef, include_vrtrack => 1) worked';
 
 exit;

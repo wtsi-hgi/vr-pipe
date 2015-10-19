@@ -42,6 +42,7 @@ class VRPipe::Steps::bamtofastq with VRPipe::StepRole {
         return {
             bamtofastq_exe   => VRPipe::StepOption->create(description => 'path to bamtofastq executable',                                                                                                                                                      optional => 1, default_value => 'bamtofastq'),
             bamtofastq_opts  => VRPipe::StepOption->create(description => 'bamtofastq options (excluding arguments that set input/output file names)',                                                                                                          optional => 1, default_value => 'gz=1 exclude=SECONDARY,SUPPLEMENTARY,QCFAIL'),
+            rescue_orphans   => VRPipe::StepOption->create(description => 'boolean; rescue orphan reads as single end reads',                                                                                                                                   optional => 1, default_value => 0),
             fastqcheck_exe   => VRPipe::StepOption->create(description => 'path to fastqcheck executable',                                                                                                                                                      optional => 1, default_value => 'fastqcheck'),
             fastq_chunk_size => VRPipe::StepOption->create(description => 'size of output fastq chunks in base pair. When a value other than zero is specified, bamtofastq split option is used to generate the output fastqs in chunks of the specified size', optional => 1, default_value => '1000000000'),
         };
@@ -67,7 +68,7 @@ class VRPipe::Steps::bamtofastq with VRPipe::StepRole {
                     center_name      => 'center name',
                     platform         => 'sequencing platform, eg. ILLUMINA|LS454|ABI_SOLID',
                     study            => 'name of the study, put in the DS field of the RG header line',
-                    optional         => ['lane', 'library', 'sample', 'center_name', 'platform', 'study', 'mean_insert_size']
+                    optional         => ['lane', 'library', 'sample', 'center_name', 'platform', 'study', 'mean_insert_size', 'forward_reads', 'reverse_reads']
                 }
             ),
         };
@@ -79,6 +80,7 @@ class VRPipe::Steps::bamtofastq with VRPipe::StepRole {
             my $options         = $self->options;
             my $bamtofastq_exe  = $options->{bamtofastq_exe};
             my $bamtofastq_opts = $options->{bamtofastq_opts};
+            my $rescue_orphans  = $options->{rescue_orphans};
             my $fastqcheck_exe  = $options->{fastqcheck_exe};
             my $chunk_size      = $options->{fastq_chunk_size};
             if ($bamtofastq_opts =~ /\s(F|F2|S|O|O2|filename|fasta|split)=/) {
@@ -101,6 +103,18 @@ class VRPipe::Steps::bamtofastq with VRPipe::StepRole {
             my $req = $self->new_requirements(memory => 500, time => 1);
             
             foreach my $bam (@{ $self->inputs->{bam_files} }) {
+                # out inputs definition ensures that at least 1 input bam has
+                # avg_read_length metadata, needed for the following
+                # split_fastq_outs to work, but it's possible others do not
+                # if our input comes from samtools_split_by_readgroup step, and
+                # the input to that was a bam where some of the readgroups in
+                # the header don't actually have any reads in the file.
+                # Anyway, we just skip inputs that don't have the metadata
+                # (and therefore likely have no reads, since the step prior to
+                # this should have been bam_metadata, guaranteeing we have this
+                # metadata where possible).
+                next unless $bam->meta_value('avg_read_length');
+                
                 my $source_bam = $bam->path->stringify;
                 my @fq_files = VRPipe::Steps::bamtofastq->split_fastq_outs(split_dir => $self->output_root, bam => $source_bam, chunk_size => $chunk_size, suffix => $fastq_suffix);
                 my @outfiles;
@@ -114,7 +128,8 @@ class VRPipe::Steps::bamtofastq with VRPipe::StepRole {
                 push(@outfiles, $out_log);
                 my @fq_paths = map { $_->path } @fq_files;
                 
-                my $this_cmd = "use VRPipe::Steps::bamtofastq; VRPipe::Steps::bamtofastq->bamtofastq(bam => q[$source_bam], fastqs => [qw(@fq_paths)], bamtofastq_exe => q[$bamtofastq_exe], bamtofastq_opts => q[$bamtofastq_opts], fastqcheck_exe => q[$fastqcheck_exe], chunk_size => q[$chunk_size]);";
+                my $rescue = $rescue_orphans ? ', rescue_orphans => 1' : '';
+                my $this_cmd = "use VRPipe::Steps::bamtofastq; VRPipe::Steps::bamtofastq->bamtofastq(bam => q[$source_bam], fastqs => [qw(@fq_paths)], bamtofastq_exe => q[$bamtofastq_exe], bamtofastq_opts => q[$bamtofastq_opts], fastqcheck_exe => q[$fastqcheck_exe], chunk_size => q[$chunk_size]$rescue);";
                 $self->dispatch_vrpipecode($this_cmd, $req, { output_files => \@outfiles });
             }
         };
@@ -159,7 +174,7 @@ class VRPipe::Steps::bamtofastq with VRPipe::StepRole {
         return 0;          # meaning unlimited
     }
     
-    method bamtofastq (ClassName|Object $self: Str|File :$bam!, ArrayRef[Str|File] :$fastqs!, Str|File :$bamtofastq_exe, Str :$bamtofastq_opts, Str|File :$fastqcheck_exe, Int :$chunk_size!) {
+    method bamtofastq (ClassName|Object $self: Str|File :$bam!, ArrayRef[Str|File] :$fastqs!, Str|File :$bamtofastq_exe, Str :$bamtofastq_opts, Str|File :$fastqcheck_exe, Int :$chunk_size!, Bool :$rescue_orphans? = 0) {
         my $in_file  = VRPipe::File->get(path => $bam);
         my $bam_meta = $in_file->metadata;
         my $basename = $in_file->basename;
@@ -184,7 +199,10 @@ class VRPipe::Steps::bamtofastq with VRPipe::StepRole {
         my $out_dir   = VRPipe::File->get(path => $fastqs->[0])->dir;
         my $logfile   = "$out_dir/$basename.log";
         my $out_param = "F=$out_dir/${basename}_1.fastq$suffix F2=$out_dir/${basename}_2.fastq$suffix S=$out_dir/${basename}_M.fastq$suffix";
-        my $cmd       = "$bamtofastq_exe $bamtofastq_opts $out_param$split_args filename=$bam 2>$logfile";
+        if ($rescue_orphans) {
+            $out_param .= " O=$out_dir/${basename}_M.fastq$suffix O2=$out_dir/${basename}_M.fastq$suffix";
+        }
+        my $cmd = "$bamtofastq_exe $bamtofastq_opts $out_param$split_args filename=$bam 2>$logfile";
         $in_file->disconnect;
         system($cmd) && $self->throw("failed to run [$cmd]");
         
@@ -379,7 +397,7 @@ class VRPipe::Steps::bamtofastq with VRPipe::StepRole {
         }
         
         # create the extra_file=$path in dtabase and define it as output file
-        my $extra_file = VRPipe::File->create(path => $path, metadata => {%$fastq_meta});
+        my $extra_file = VRPipe::File->create(path => $path, type => 'fq', metadata => {%$fastq_meta});
         
         my $step_state = $existing_stepoutputfiles[0]->stepstate;
         VRPipe::StepOutputFile->create(

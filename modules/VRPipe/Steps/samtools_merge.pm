@@ -43,7 +43,7 @@ class VRPipe::Steps::samtools_merge with VRPipe::StepRole {
     
     method inputs_definition {
         return {
-            aln_files => VRPipe::StepIODefinition->create(
+            bam_files => VRPipe::StepIODefinition->create(
                 type        => 'aln',                                          # cram or bam
                 max_files   => -1,
                 description => '1 or more coordinate sorted BAM or CRAM files',
@@ -69,13 +69,13 @@ class VRPipe::Steps::samtools_merge with VRPipe::StepRole {
                 VRPipe::StepCmdSummary->create(
                     exe     => 'samtools',
                     version => VRPipe::StepCmdSummary->determine_version($samtools, '^Version: (.+)$'),
-                    summary => "samtools merge $samtools_merge_opts \$merged_bam \$input_files(s); samtools index \$merged_bam"
+                    summary => "samtools merge $samtools_merge_opts \$merged_file \$input_files(s); samtools index \$merged_file"
                 )
             );
             
             my $req = $self->new_requirements(memory => 3000, time => 1);
             
-            my $inputs          = $self->inputs->{aln_files};
+            my $inputs          = $self->inputs->{bam_files};
             my $merged_metadata = $self->common_metadata($inputs);
             $merged_metadata = { %$merged_metadata, $self->element_meta };
             my @input_paths = map { $_->path } @$inputs;
@@ -87,30 +87,30 @@ class VRPipe::Steps::samtools_merge with VRPipe::StepRole {
                 $basename       = "${chrom}_${from}-${to}.$basename";
                 $check_read_sum = 0;
             }
-            my $merged_bam_file = $self->output_file(
-                output_key => 'merged_bam_files',
+            my $merged_file = $self->output_file(
+                output_key => 'merged_files',
                 basename   => $basename . '.bam',
                 type       => 'bam',
                 metadata   => $merged_metadata
             );
-            my $merged_bai_file = $self->output_file(
-                output_key => 'merged_bai_files',
+            my $merged_index_file = $self->output_file(
+                output_key => 'merged_index_files',
                 basename   => $basename . '.bam.bai',
                 type       => 'bai',
                 metadata   => $merged_metadata
             );
-            my $merged_path = $merged_bam_file->path;
+            my $merged_path = $merged_file->path;
             my $merge_cmd   = qq[$samtools merge $samtools_merge_opts $merged_path @input_paths];
             my $index_cmd   = qq[$samtools index $merged_path];
-            my $this_cmd    = "use VRPipe::Steps::samtools_merge; VRPipe::Steps::samtools_merge->merge_and_check(qq[$merge_cmd; $index_cmd], input_file_list => $file_list, out_file => q[$merged_path], check_read_sum => $check_read_sum);";
-            $self->dispatch_vrpipecode($this_cmd, $req, { output_files => [$merged_bam_file, $merged_bai_file] });
+            my $this_cmd    = "use VRPipe::Steps::samtools_merge; VRPipe::Steps::samtools_merge->merge_and_check(qq[$merge_cmd && $index_cmd], input_file_list => $file_list, out_file => q[$merged_path], check_read_sum => $check_read_sum);";
+            $self->dispatch_vrpipecode($this_cmd, $req, { output_files => [$merged_file, $merged_index_file] });
         };
     }
     
     method outputs_definition {
         return {
-            merged_bam_files => VRPipe::StepIODefinition->create(type => 'bam', max_files => 1, description => 'a merged BAM file'),
-            merged_bai_files => VRPipe::StepIODefinition->create(type => 'bai', max_files => 1, description => 'BAI index file for merged BAM file'),
+            merged_files       => VRPipe::StepIODefinition->create(type => 'aln', max_files => 1, description => 'a merged BAM or CRAM file'),
+            merged_index_files => VRPipe::StepIODefinition->create(type => 'bin', max_files => 1, description => 'BAI index file for merged BAM file'),
         };
     }
     

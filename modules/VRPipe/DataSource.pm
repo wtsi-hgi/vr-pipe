@@ -137,6 +137,12 @@ class VRPipe::DataSource extends VRPipe::Persistent {
         handles => [qw(description source_description method_description)]
     );
     
+    has 'debug' => (
+        is      => 'rw',
+        isa     => 'Bool',
+        default => 0
+    );
+    
     method _build_source {
         my $changed_marker = $self->_changed_marker;
         return VRPipe::DataSourceFactory->create(
@@ -146,7 +152,8 @@ class VRPipe::DataSource extends VRPipe::Persistent {
                 source  => $self->source,
                 options => $self->options,
                 $changed_marker ? ('_changed_marker' => $changed_marker) : (),
-                '_datasource_id' => $self->id
+                '_datasource_id' => $self->id,
+                debug            => $self->debug
             }
         );
     }
@@ -154,17 +161,17 @@ class VRPipe::DataSource extends VRPipe::Persistent {
     __PACKAGE__->make_persistent(has_many => [elements => 'VRPipe::DataElement']);
     
     around elements {
-        my (undef, undef, $status_messages) = @_;
+        my (undef, undef, $status_messages, $debug) = @_;
         # we don't return $self->$orig because that returns all associated
         # elements; we need to first create all elements, and then only return
         # elements that are still "current" (haven't been deleted in the source)
-        $self->_prepare_elements_and_states($status_messages);
+        $self->_prepare_elements_and_states($status_messages, $debug || $self->debug);
         return VRPipe::DataElement->search_paged({ datasource => $self->id, withdrawn => 0 });
     }
     
-    method incomplete_element_states (VRPipe::PipelineSetup $setup, Bool :$include_withdrawn = 0, Bool :$prepare = 1, Bool :$only_not_started = 0) {
+    method incomplete_element_states (VRPipe::PipelineSetup $setup, Bool :$include_withdrawn = 0, Bool :$prepare = 1, Bool :$only_not_started = 0, Bool :$debug = 0) {
         if ($prepare) {
-            $self->_prepare_elements_and_states;
+            $self->_prepare_elements_and_states(0, $debug || $self->debug);
         }
         
         my $pipeline  = $setup->pipeline;
@@ -183,8 +190,9 @@ class VRPipe::DataSource extends VRPipe::Persistent {
         return $self->$orig;
     }
     
-    method _prepare_elements_and_states (Bool $status_messages?) {
+    method _prepare_elements_and_states (Bool $status_messages?, Bool $debug?) {
         my $source = $self->_source_instance || return;
+        $debug ||= $self->debug;
         unless (defined $status_messages) {
             $status_messages = $self->verbose > 0 ? 1 : 0;
         }
@@ -192,7 +200,8 @@ class VRPipe::DataSource extends VRPipe::Persistent {
         # we must not go through and update the dataelements more than once
         # simultaneously, and we must not return elements in a partially updated
         # state, so we lock/block at this point
-        my $blocked = $self->block_until_locked;
+        warn "will check the datasource, first blocking until locked\n" if $debug;
+        my $blocked = $self->block_until_locked(debug => $debug);
         if (1 || $blocked) { #*** I think it's an artifact of the test in DataSource.t that I have to force this reselect
             $self->reselect_values_from_db;
             my $current_marker = $self->_changed_marker;
@@ -200,12 +209,14 @@ class VRPipe::DataSource extends VRPipe::Persistent {
                 $source->_changed_marker($current_marker);
             }
         }
-        $self->maintain_lock;
+        warn "locked the datasource\n" if $debug;
         
         my @setup_ids = VRPipe::PipelineSetup->get_column_values('id', { datasource => $self->id });
+        $source->debug($debug);
         
         my $generated_elements = 0;
         if ($source->_has_changed) {
+            warn "the datasource source has changed\n" if $debug;
             # we need to create a DataElementState for each setup using this
             # datasource for each new dataelement. To minimise time wasted
             # trying to create DES when they already exist, before getting new
@@ -218,27 +229,44 @@ class VRPipe::DataSource extends VRPipe::Persistent {
             
             # now page through dataelements with a higher id than previous most
             # recent:
-            my @des_args;
+            my (@des_args, @enqueue_args);
             my $pager = VRPipe::DataElement->get_column_values_paged('id', { datasource => $self->id, $most_recent_element_id ? (id => { '>' => $most_recent_element_id }) : () });
             while (my $eids = $pager->next) {
                 foreach my $eid (@$eids) {
                     foreach my $setup_id (@setup_ids) {
                         push(@des_args, { pipelinesetup => $setup_id, dataelement => $eid });
+                        
+                        # bulk_create_or_update call below alters @des_args, so
+                        # we push to another array for queueing purposes
+                        push(@enqueue_args, [$setup_id, $eid]);
                     }
                 }
             }
+            warn "generated ", scalar(@des_args), " new dataelements, will now create the states for them\n" if $debug;
             VRPipe::DataElementState->bulk_create_or_update(@des_args) if @des_args;
             
+            # queue up these new de to be triggered (vrpipe-server will do
+            # something with these); we don't queue des ids because we don't
+            # know them, and that's because it's much faster for the above call
+            # to be in void context
+            my $im = $self->_in_memory;
+            foreach my $args (@enqueue_args) {
+                $im->enqueue('trigger', "$args->[0]:$args->[1]");
+            }
+            
             # we're done, so update changed marker
-            $self->_changed_marker($source->_changed_marker);
+            my $cm = $source->_changed_marker;
+            $self->_changed_marker($cm);
             $self->update;
+            warn "set _changed_marker to $cm\n" if $debug;
         }
         else {
+            warn "the datasource source hasn't changed\n" if $debug;
             # check that a new pipelinesetup hasn't been created since the source
             # last changed
             my $expected_count = VRPipe::DataElement->search({ datasource => $self->id });
             
-            my @des_args;
+            my (@des_args, @enqueue_args);
             foreach my $setup_id (@setup_ids) {
                 my $count = VRPipe::DataElementState->search({ pipelinesetup => $setup_id });
                 
@@ -247,14 +275,25 @@ class VRPipe::DataSource extends VRPipe::Persistent {
                     while (my $dataelement_ids = $pager->next) {
                         foreach my $eid (@$dataelement_ids) {
                             push(@des_args, { pipelinesetup => $setup_id, dataelement => $eid });
+                            push(@enqueue_args, [$setup_id, $eid]);
                         }
                     }
                 }
             }
-            VRPipe::DataElementState->bulk_create_or_update(@des_args) if @des_args;
+            
+            if (@des_args) {
+                warn "new setups were found, will create ", scalar(@des_args), " dataelementstates for them\n" if $debug;
+                VRPipe::DataElementState->bulk_create_or_update(@des_args);
+                
+                my $im = $self->_in_memory;
+                foreach my $args (@enqueue_args) {
+                    $im->enqueue('trigger', "$args->[0]:$args->[1]");
+                }
+            }
         }
         $self->unlock;
         
+        warn "all done, will return generated dataelements\n" if $debug;
         return $generated_elements;
     }
 }

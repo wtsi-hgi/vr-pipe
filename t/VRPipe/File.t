@@ -8,7 +8,7 @@ use Parallel::ForkManager;
 use Sys::Hostname;
 
 BEGIN {
-    use Test::Most tests => 101;
+    use Test::Most tests => 111;
     use VRPipeTest;
 }
 
@@ -446,6 +446,41 @@ SKIP: {
     is_deeply $cram->header_lines, [$header->slurp(chomp => 1)], 'header_lines() works for a cram file';
 }
 ok !$pfile->header_lines, 'header_lines() returns undef for a txt file';
+
+# test that permission denied causes a throw, not an assumption that a file
+# doesn't exist
+my $perm_dir = dir($tmp_dir, 'noperm');
+$vrobj->make_path($perm_dir);
+my $perm_path = file($perm_dir, 'perm.txt');
+my $perm_file = VRPipe::File->create(path => $perm_path);
+is $perm_file->e, 0, 'non-existent file reports e 0';
+my $perm_fh = $perm_file->openw;
+print $perm_fh "content\n";
+$perm_file->close;
+$perm_file = VRPipe::File->get(path => $perm_path);
+is $perm_file->e, 1, 'existent file reports e 1';
+system("chmod a-x $perm_dir");
+throws_ok { $perm_file->update_stats_from_disc } qr/Permission denied/, 'update_stats_from_disc() throws if permission denied';
+$perm_file = VRPipe::File->get(path => $perm_path);
+is $perm_file->e, 1, 'existent file still reports e 1 after permission denied';
+system("chmod a+x $perm_dir");
+$perm_file->update_stats_from_disc;
+is $perm_file->e, 1, 'update_stats_from_disc() worked once permissions ok';
+
+# we should be able to create File objects for paths with spaces in them
+my $space_path = file($tmp_dir, 'file with spaces.txt');
+ok my $space_f = VRPipe::File->create(path => $space_path), 'could create a file with spaces in the name';
+ok $ofh = $space_f->openw, 'could open a file with spaces for writing';
+print $ofh "s p a c e\n";
+$space_f->close;
+my $space_dir = dir($tmp_dir, 'dir with spaces');
+$vrobj->make_path($space_dir);
+my $dest_space_f = VRPipe::File->create(path => file($space_dir, 'moved with spaces.txt'));
+ok $space_f->move($dest_space_f), 'was able to move a space file to a space path';
+ok $ifh = $dest_space_f->openr, 'could open a file with spaces for reading';
+my $space_str = <$ifh>;
+$dest_space_f->close;
+is $space_str, "s p a c e\n", 'the move and open really worked';
 
 done_testing;
 exit;
