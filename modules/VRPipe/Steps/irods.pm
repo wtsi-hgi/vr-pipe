@@ -90,7 +90,7 @@ class VRPipe::Steps::irods with VRPipe::StepRole {
     }
     
     method max_simultaneous {
-        return 40;
+        return 30; # TODO: replace by seq_irods tokens
     }
     
     method get_file_by_basename (ClassName|Object $self: Str :$basename!, Str|File :$dest!, Str :$zone = 'seq', Str|File :$iget!, Str|File :$iquest!, Str|File :$ichksum!, Str :$path_regex?, Str|File :$samtools_for_cram_to_bam?, Str :$iget_args?, Str :$ichksum_args?) {
